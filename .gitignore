@@ -1,0 +1,21 @@
+# Data files (don't commit sensitive catalog data)
+*.xlsx
+*.csv
+
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+*.so
+.env
+venv/
+ENV/
+
+# IDE
+.idea/
+.vscode/
+*.swp
