@@ -9,6 +9,8 @@ from datetime import datetime
 
 import pandas as pd
 import streamlit as st
+import gspread
+from google.oauth2.service_account import Credentials
 
 from catalog_delta import (
     build_flags,
@@ -17,6 +19,46 @@ from catalog_delta import (
     filter_sheet,
     validate_dataframe,
 )
+
+# Google Sheets configuration
+GOOGLE_SHEET_ID = "1jcL_nEsyMqpzssXFh-0IHpfWKDFtFhzlERzKjcdX69Y"
+SCOPES = [
+    "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/drive",
+]
+
+
+def save_to_google_sheets(summary: pd.DataFrame) -> bool:
+    """Save the catalog health summary to Google Sheets."""
+    try:
+        # Get credentials from Streamlit secrets
+        creds_dict = st.secrets["gcp_service_account"]
+        creds = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
+        client = gspread.authorize(creds)
+
+        # Open the spreadsheet
+        sheet = client.open_by_key(GOOGLE_SHEET_ID).sheet1
+
+        # Prepare the row data
+        today_date = datetime.now().strftime("%Y-%m-%d")
+        row = [
+            today_date,
+            int(summary["Total SKUs"].iloc[0]),
+            int(summary["Visible"].iloc[0]),
+            float(summary["Visible %"].iloc[0]),
+            float(summary["With Image %"].iloc[0]),
+            float(summary["With Price %"].iloc[0]),
+            float(summary["With Stock %"].iloc[0]),
+            float(summary["Avg Content Score"].iloc[0]),
+            int(summary["Score = 100"].iloc[0]),
+        ]
+
+        # Append the row
+        sheet.append_row(row, value_input_option="USER_ENTERED")
+        return True
+    except Exception as e:
+        st.error(f"Failed to save to Google Sheets: {e}")
+        return False
 
 # --- PAGE CONFIG ---
 st.set_page_config(
@@ -111,6 +153,19 @@ if today_file and yesterday_file:
         with kpi_cols[3]:
             st.metric("Avg Content Score", f"{summary['Avg Content Score'].iloc[0]}")
             st.metric("Perfect Score (100)", f"{summary['Score = 100'].iloc[0]:,}")
+
+        # --- SAVE TO GOOGLE SHEETS ---
+        st.divider()
+        col_save, col_status = st.columns([1, 3])
+        with col_save:
+            if st.button("📊 Save to History", type="primary", help="Save today's summary to Google Sheets"):
+                with st.spinner("Saving to Google Sheets..."):
+                    if save_to_google_sheets(summary):
+                        st.success("✅ Saved to Google Sheets!")
+                    else:
+                        st.error("Failed to save. Check your configuration.")
+        with col_status:
+            st.caption("Click to save today's catalog health metrics to your Google Sheets history.")
 
         # --- DELTA SUMMARIES ---
         st.header("🔄 Changes Detected")
