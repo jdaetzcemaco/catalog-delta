@@ -1,23 +1,27 @@
 """
 FastAPI endpoint for automated catalog processing.
 Receives a download URL, processes the file, and saves to Google Sheets.
-Memory-optimized for large files.
+Memory-optimized for large files. Uses background processing.
 """
 
 import gc
 import os
 import tempfile
+import threading
 from datetime import datetime
 
 import gspread
 import pandas as pd
 import requests
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.responses import JSONResponse
 from google.oauth2.service_account import Credentials
 from pydantic import BaseModel
 
 app = FastAPI(title="Catalog Delta API")
+
+# Track processing status
+processing_status = {"status": "idle", "last_run": None, "last_result": None}
 
 # Google Sheets configuration
 GOOGLE_SHEET_ID = "1jcL_nEsyMqpzssXFh-0IHpfWKDFtFhzlERzKjcdX69Y"
@@ -200,48 +204,84 @@ def health_check():
     return {"status": "ok", "service": "Catalog Delta API"}
 
 
-@app.post("/process")
-def process_catalog(request: ProcessRequest):
-    """
-    Process a catalog file from the given URL.
-    Downloads the file, calculates health metrics, and saves to Google Sheets.
-    Memory-optimized: streams to temp file, processes, then cleans up.
-    """
+@app.get("/status")
+def get_status():
+    """Get the current processing status."""
+    return processing_status
+
+
+def process_in_background(download_url: str):
+    """Background task to download and process the catalog."""
+    global processing_status
     temp_path = None
+
     try:
+        processing_status["status"] = "downloading"
+
         # Download to temp file (streaming to avoid memory issues)
         with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as tmp:
             temp_path = tmp.name
-            response = requests.get(request.download_url, timeout=180, stream=True)
+            response = requests.get(download_url, timeout=300, stream=True)
             response.raise_for_status()
 
             for chunk in response.iter_content(chunk_size=8192):
                 tmp.write(chunk)
 
+        processing_status["status"] = "processing"
+
         # Process the file
         summary = calculate_summary_from_file(temp_path)
+
+        processing_status["status"] = "saving"
 
         # Save to Google Sheets
         save_to_google_sheets(summary)
 
-        return JSONResponse(content={
+        processing_status["status"] = "completed"
+        processing_status["last_run"] = datetime.now().isoformat()
+        processing_status["last_result"] = {
             "success": True,
-            "message": "Catalog processed and saved to Google Sheets",
-            "summary": {
-                "date": datetime.now().strftime("%Y-%m-%d"),
-                **summary
-            }
-        })
+            "summary": summary
+        }
 
-    except requests.RequestException as e:
-        raise HTTPException(status_code=400, detail=f"Failed to download file: {str(e)}")
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Processing error: {str(e)}")
+        processing_status["status"] = "error"
+        processing_status["last_result"] = {
+            "success": False,
+            "error": str(e)
+        }
     finally:
         # Clean up temp file
         if temp_path and os.path.exists(temp_path):
             os.unlink(temp_path)
         gc.collect()
+
+
+@app.post("/process")
+def process_catalog(request: ProcessRequest, background_tasks: BackgroundTasks):
+    """
+    Process a catalog file from the given URL.
+    Returns immediately and processes in background.
+    Check /status endpoint for progress.
+    """
+    global processing_status
+
+    if processing_status["status"] in ["downloading", "processing", "saving"]:
+        return JSONResponse(content={
+            "success": False,
+            "message": "Another process is already running",
+            "current_status": processing_status["status"]
+        }, status_code=409)
+
+    # Start background processing
+    processing_status["status"] = "starting"
+    background_tasks.add_task(process_in_background, request.download_url)
+
+    return JSONResponse(content={
+        "success": True,
+        "message": "Processing started in background. Check /status for progress.",
+        "status_url": "/status"
+    })
 
 
 if __name__ == "__main__":
