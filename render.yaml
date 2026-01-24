@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: catalog-delta-api
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn api:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: GCP_PROJECT_ID
+        sync: false
+      - key: GCP_PRIVATE_KEY_ID
+        sync: false
+      - key: GCP_PRIVATE_KEY
+        sync: false
+      - key: GCP_CLIENT_EMAIL
+        sync: false
+      - key: GCP_CLIENT_ID
+        sync: false
+      - key: GCP_CLIENT_X509_CERT_URL
+        sync: false
