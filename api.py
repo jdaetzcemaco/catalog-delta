@@ -5,6 +5,7 @@ Memory-optimized for large files. Uses background processing.
 """
 
 import gc
+import logging
 import os
 import tempfile
 import threading
@@ -17,6 +18,10 @@ from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.responses import JSONResponse
 from google.oauth2.service_account import Credentials
 from pydantic import BaseModel
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Catalog Delta API")
 
@@ -178,7 +183,20 @@ def calculate_summary_from_file(filepath: str) -> dict:
 
 def save_to_google_sheets(summary: dict) -> bool:
     """Save the catalog health summary to Google Sheets."""
+    logger.info("Connecting to Google Sheets...")
+
+    # Check if credentials are set
+    if not os.environ.get("GCP_PROJECT_ID"):
+        raise ValueError("GCP_PROJECT_ID environment variable not set")
+    if not os.environ.get("GCP_PRIVATE_KEY"):
+        raise ValueError("GCP_PRIVATE_KEY environment variable not set")
+    if not os.environ.get("GCP_CLIENT_EMAIL"):
+        raise ValueError("GCP_CLIENT_EMAIL environment variable not set")
+
+    logger.info(f"Using service account: {os.environ.get('GCP_CLIENT_EMAIL')}")
+
     client = get_google_sheets_client()
+    logger.info(f"Opening sheet: {GOOGLE_SHEET_ID}")
     sheet = client.open_by_key(GOOGLE_SHEET_ID).sheet1
 
     today_date = datetime.now().strftime("%Y-%m-%d")
@@ -194,7 +212,9 @@ def save_to_google_sheets(summary: dict) -> bool:
         summary["perfect_score_count"],
     ]
 
+    logger.info(f"Appending row: {row}")
     sheet.append_row(row, value_input_option="USER_ENTERED")
+    logger.info("Row appended successfully")
     return True
 
 
@@ -216,26 +236,36 @@ def process_in_background(download_url: str):
     temp_path = None
 
     try:
+        logger.info(f"Starting background process for URL: {download_url[:100]}...")
         processing_status["status"] = "downloading"
 
         # Download to temp file (streaming to avoid memory issues)
         with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as tmp:
             temp_path = tmp.name
+            logger.info(f"Downloading to temp file: {temp_path}")
             response = requests.get(download_url, timeout=300, stream=True)
             response.raise_for_status()
 
+            total_size = 0
             for chunk in response.iter_content(chunk_size=8192):
                 tmp.write(chunk)
+                total_size += len(chunk)
+
+            logger.info(f"Download complete. Total size: {total_size / 1024 / 1024:.2f} MB")
 
         processing_status["status"] = "processing"
+        logger.info("Processing file...")
 
         # Process the file
         summary = calculate_summary_from_file(temp_path)
+        logger.info(f"Processing complete. Found {summary['total_skus']} SKUs")
 
         processing_status["status"] = "saving"
+        logger.info("Saving to Google Sheets...")
 
         # Save to Google Sheets
         save_to_google_sheets(summary)
+        logger.info("Saved to Google Sheets successfully!")
 
         processing_status["status"] = "completed"
         processing_status["last_run"] = datetime.now().isoformat()
@@ -243,8 +273,10 @@ def process_in_background(download_url: str):
             "success": True,
             "summary": summary
         }
+        logger.info("Background processing completed successfully!")
 
     except Exception as e:
+        logger.error(f"Background processing failed: {str(e)}", exc_info=True)
         processing_status["status"] = "error"
         processing_status["last_result"] = {
             "success": False,
@@ -254,6 +286,7 @@ def process_in_background(download_url: str):
         # Clean up temp file
         if temp_path and os.path.exists(temp_path):
             os.unlink(temp_path)
+            logger.info("Temp file cleaned up")
         gc.collect()
 
 
