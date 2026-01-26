@@ -186,7 +186,7 @@ def calculate_summary_from_file(filepath: str) -> dict:
 
 
 def save_to_google_sheets(summary: dict) -> bool:
-    """Save the catalog health summary to Google Sheets."""
+    """Save the catalog health summary to Google Sheets with delta from yesterday."""
     logger.info("Connecting to Google Sheets...")
 
     # Check if credentials are set
@@ -203,20 +203,87 @@ def save_to_google_sheets(summary: dict) -> bool:
     logger.info(f"Opening sheet: {GOOGLE_SHEET_ID}")
     sheet = client.open_by_key(GOOGLE_SHEET_ID).sheet1
 
+    # Get today's values
     today_date = datetime.now().strftime("%Y-%m-%d")
+    total_skus = summary["total_skus"]
+    visible = summary["visible"]
+    visible_pct = summary["visible_pct"]
+    with_image_pct = summary["with_image_pct"]
+    with_price_pct = summary["with_price_pct"]
+    with_stock_pct = summary["with_stock_pct"]
+    avg_score = summary["avg_score"]
+    perfect_score = summary["perfect_score_count"]
+
+    # Get yesterday's values to calculate delta
+    logger.info("Reading previous row for delta calculation...")
+    all_rows = sheet.get_all_values()
+
+    # Calculate deltas (default to 0 if no previous data)
+    delta_skus = 0
+    delta_visible = 0
+    delta_image_pct = 0.0
+    delta_price_pct = 0.0
+    delta_stock_pct = 0.0
+    delta_score = 0.0
+    delta_perfect = 0
+
+    if len(all_rows) > 1:  # Has data beyond header
+        try:
+            last_row = all_rows[-1]
+            if len(last_row) >= 9:
+                # Check if old format (9 cols) or new format (16 cols)
+                if len(last_row) < 15:
+                    # Old format without deltas
+                    prev_total = int(last_row[1]) if last_row[1] else 0
+                    prev_visible = int(last_row[2]) if last_row[2] else 0
+                    prev_image_pct = float(last_row[4]) if last_row[4] else 0
+                    prev_price_pct = float(last_row[5]) if last_row[5] else 0
+                    prev_stock_pct = float(last_row[6]) if last_row[6] else 0
+                    prev_score = float(last_row[7]) if last_row[7] else 0
+                    prev_perfect = int(last_row[8]) if last_row[8] else 0
+                else:
+                    # New format with deltas
+                    prev_total = int(last_row[1]) if last_row[1] else 0
+                    prev_visible = int(last_row[3]) if last_row[3] else 0
+                    prev_image_pct = float(last_row[6]) if last_row[6] else 0
+                    prev_price_pct = float(last_row[8]) if last_row[8] else 0
+                    prev_stock_pct = float(last_row[10]) if last_row[10] else 0
+                    prev_score = float(last_row[12]) if last_row[12] else 0
+                    prev_perfect = int(last_row[14]) if last_row[14] else 0
+
+                delta_skus = total_skus - prev_total
+                delta_visible = visible - prev_visible
+                delta_image_pct = round(with_image_pct - prev_image_pct, 2)
+                delta_price_pct = round(with_price_pct - prev_price_pct, 2)
+                delta_stock_pct = round(with_stock_pct - prev_stock_pct, 2)
+                delta_score = round(avg_score - prev_score, 2)
+                delta_perfect = perfect_score - prev_perfect
+
+                logger.info(f"Delta from previous: SKUs {delta_skus:+d}, Visible {delta_visible:+d}")
+        except (ValueError, IndexError) as e:
+            logger.warning(f"Could not calculate delta: {e}")
+
+    # Prepare row with deltas
     row = [
         today_date,
-        summary["total_skus"],
-        summary["visible"],
-        summary["visible_pct"],
-        summary["with_image_pct"],
-        summary["with_price_pct"],
-        summary["with_stock_pct"],
-        summary["avg_score"],
-        summary["perfect_score_count"],
+        total_skus,
+        delta_skus,
+        visible,
+        delta_visible,
+        visible_pct,
+        with_image_pct,
+        delta_image_pct,
+        with_price_pct,
+        delta_price_pct,
+        with_stock_pct,
+        delta_stock_pct,
+        avg_score,
+        delta_score,
+        perfect_score,
+        delta_perfect,
     ]
 
-    logger.info(f"Appending row: {row}")
+    logger.info(f"Appending row with deltas: {row}")
     sheet.append_row(row, value_input_option="USER_ENTERED")
     logger.info("Row appended successfully")
     return True

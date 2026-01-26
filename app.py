@@ -50,22 +50,89 @@ def save_to_google_sheets(summary: pd.DataFrame) -> bool:
             st.error(f"API Response: {api_err.response.text if hasattr(api_err, 'response') else 'N/A'}")
             return False
 
-        # Prepare the row data
+        # Get today's values
         today_date = datetime.now().strftime("%Y-%m-%d")
+        total_skus = int(summary["Total SKUs"].iloc[0])
+        visible = int(summary["Visible"].iloc[0])
+        visible_pct = float(summary["Visible %"].iloc[0])
+        with_image_pct = float(summary["With Image %"].iloc[0])
+        with_price_pct = float(summary["With Price %"].iloc[0])
+        with_stock_pct = float(summary["With Stock %"].iloc[0])
+        avg_score = float(summary["Avg Content Score"].iloc[0])
+        perfect_score = int(summary["Score = 100"].iloc[0])
+
+        # Get yesterday's values to calculate delta
+        st.write("Debug: Reading previous row for delta calculation...")
+        all_rows = sheet.get_all_values()
+
+        # Calculate deltas (default to 0 if no previous data)
+        delta_skus = 0
+        delta_visible = 0
+        delta_image_pct = 0.0
+        delta_price_pct = 0.0
+        delta_stock_pct = 0.0
+        delta_score = 0.0
+        delta_perfect = 0
+
+        if len(all_rows) > 1:  # Has data beyond header
+            try:
+                last_row = all_rows[-1]
+                # Previous values (columns: Date, Total, Δ, Visible, Δ, Vis%, Img%, Δ, Price%, Δ, Stock%, Δ, Score, Δ, Perfect, Δ)
+                # If old format without deltas, columns are: Date, Total, Visible, Vis%, Img%, Price%, Stock%, Score, Perfect
+                if len(last_row) >= 9:
+                    prev_total = int(last_row[1]) if last_row[1] else 0
+                    prev_visible = int(last_row[3]) if len(last_row) > 3 and last_row[3] else int(last_row[2]) if last_row[2] else 0
+
+                    # Check if old format (9 cols) or new format (17 cols)
+                    if len(last_row) < 15:
+                        # Old format
+                        prev_visible = int(last_row[2]) if last_row[2] else 0
+                        prev_image_pct = float(last_row[4]) if last_row[4] else 0
+                        prev_price_pct = float(last_row[5]) if last_row[5] else 0
+                        prev_stock_pct = float(last_row[6]) if last_row[6] else 0
+                        prev_score = float(last_row[7]) if last_row[7] else 0
+                        prev_perfect = int(last_row[8]) if last_row[8] else 0
+                    else:
+                        # New format with deltas
+                        prev_visible = int(last_row[3]) if last_row[3] else 0
+                        prev_image_pct = float(last_row[6]) if last_row[6] else 0
+                        prev_price_pct = float(last_row[8]) if last_row[8] else 0
+                        prev_stock_pct = float(last_row[10]) if last_row[10] else 0
+                        prev_score = float(last_row[12]) if last_row[12] else 0
+                        prev_perfect = int(last_row[14]) if last_row[14] else 0
+
+                    delta_skus = total_skus - prev_total
+                    delta_visible = visible - prev_visible
+                    delta_image_pct = round(with_image_pct - prev_image_pct, 2)
+                    delta_price_pct = round(with_price_pct - prev_price_pct, 2)
+                    delta_stock_pct = round(with_stock_pct - prev_stock_pct, 2)
+                    delta_score = round(avg_score - prev_score, 2)
+                    delta_perfect = perfect_score - prev_perfect
+            except (ValueError, IndexError) as e:
+                st.write(f"Debug: Could not calculate delta: {e}")
+
+        # Prepare the row with deltas
         row = [
             today_date,
-            int(summary["Total SKUs"].iloc[0]),
-            int(summary["Visible"].iloc[0]),
-            float(summary["Visible %"].iloc[0]),
-            float(summary["With Image %"].iloc[0]),
-            float(summary["With Price %"].iloc[0]),
-            float(summary["With Stock %"].iloc[0]),
-            float(summary["Avg Content Score"].iloc[0]),
-            int(summary["Score = 100"].iloc[0]),
+            total_skus,
+            delta_skus,
+            visible,
+            delta_visible,
+            visible_pct,
+            with_image_pct,
+            delta_image_pct,
+            with_price_pct,
+            delta_price_pct,
+            with_stock_pct,
+            delta_stock_pct,
+            avg_score,
+            delta_score,
+            perfect_score,
+            delta_perfect,
         ]
 
         # Append the row
-        st.write("Debug: Appending row...")
+        st.write(f"Debug: Appending row with deltas (Δ SKUs: {delta_skus:+d})...")
         sheet.append_row(row, value_input_option="USER_ENTERED")
         return True
     except KeyError as e:
