@@ -10,6 +10,7 @@ from datetime import datetime
 import pandas as pd
 import streamlit as st
 import gspread
+import gspread.exceptions
 from google.oauth2.service_account import Credentials
 
 from catalog_delta import (
@@ -34,13 +35,20 @@ def save_to_google_sheets(summary: pd.DataFrame) -> bool:
         # Get credentials from Streamlit secrets
         creds_dict = dict(st.secrets["gcp_service_account"])
         st.write("Debug: Connecting with service account:", creds_dict.get("client_email", "unknown"))
+        st.write("Debug: Project ID:", creds_dict.get("project_id", "unknown"))
 
         creds = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
         client = gspread.authorize(creds)
 
         # Open the spreadsheet
-        st.write("Debug: Opening spreadsheet...")
-        sheet = client.open_by_key(GOOGLE_SHEET_ID).sheet1
+        st.write(f"Debug: Opening spreadsheet ID: {GOOGLE_SHEET_ID}")
+        try:
+            spreadsheet = client.open_by_key(GOOGLE_SHEET_ID)
+            sheet = spreadsheet.sheet1
+        except gspread.exceptions.APIError as api_err:
+            st.error(f"Google API Error: {api_err}")
+            st.error(f"API Response: {api_err.response.text if hasattr(api_err, 'response') else 'N/A'}")
+            return False
 
         # Prepare the row data
         today_date = datetime.now().strftime("%Y-%m-%d")
