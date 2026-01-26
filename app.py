@@ -32,11 +32,14 @@ def save_to_google_sheets(summary: pd.DataFrame) -> bool:
     """Save the catalog health summary to Google Sheets."""
     try:
         # Get credentials from Streamlit secrets
-        creds_dict = st.secrets["gcp_service_account"]
+        creds_dict = dict(st.secrets["gcp_service_account"])
+        st.write("Debug: Connecting with service account:", creds_dict.get("client_email", "unknown"))
+
         creds = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
         client = gspread.authorize(creds)
 
         # Open the spreadsheet
+        st.write("Debug: Opening spreadsheet...")
         sheet = client.open_by_key(GOOGLE_SHEET_ID).sheet1
 
         # Prepare the row data
@@ -54,10 +57,15 @@ def save_to_google_sheets(summary: pd.DataFrame) -> bool:
         ]
 
         # Append the row
+        st.write("Debug: Appending row...")
         sheet.append_row(row, value_input_option="USER_ENTERED")
         return True
+    except KeyError as e:
+        st.error(f"Missing secret key: {e}. Make sure gcp_service_account is configured in Streamlit secrets.")
+        return False
     except Exception as e:
-        st.error(f"Failed to save to Google Sheets: {e}")
+        st.error(f"Failed to save to Google Sheets: {type(e).__name__}: {e}")
+        st.exception(e)
         return False
 
 # --- PAGE CONFIG ---
