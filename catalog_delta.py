@@ -238,13 +238,25 @@ def compute_deltas(today: pd.DataFrame, yesterday: pd.DataFrame) -> pd.DataFrame
     exists_both = merged["content_score_today"].notna() & merged["content_score_yesterday"].notna()
 
     # Visibility changes (only for SKUs in both files)
-    merged["newly_visible"] = exists_both & (merged["is_visible_today"] == 1) & (merged["is_visible_yesterday"] == 0)
-    merged["no_longer_visible"] = exists_both & (merged["is_visible_today"] == 0) & (merged["is_visible_yesterday"] == 1)
+    vis_today = merged["is_visible_today"].fillna(0).astype(int)
+    vis_yesterday = merged["is_visible_yesterday"].fillna(0).astype(int)
+    merged["newly_visible"] = exists_both & (vis_today == 1) & (vis_yesterday == 0)
+    merged["no_longer_visible"] = exists_both & (vis_today == 0) & (vis_yesterday == 1)
 
-    # Attribute changes (only for SKUs in both files, otherwise NaN comparisons give false positives)
-    merged["image_changed"] = exists_both & (merged["has_image_today"] != merged["has_image_yesterday"])
-    merged["price_changed"] = exists_both & (merged["has_price_today"] != merged["has_price_yesterday"])
-    merged["stock_flipped"] = exists_both & (merged["has_stock_today"] != merged["has_stock_yesterday"])
+    # Attribute changes (only for SKUs in both files)
+    # Fill NaN with -1 so NaN != NaN doesn't cause issues, and NaN vs 0/1 is detected
+    img_today = merged["has_image_today"].fillna(-1).astype(int)
+    img_yesterday = merged["has_image_yesterday"].fillna(-1).astype(int)
+    merged["image_changed"] = exists_both & (img_today != img_yesterday)
+
+    price_today = merged["has_price_today"].fillna(-1).astype(int)
+    price_yesterday = merged["has_price_yesterday"].fillna(-1).astype(int)
+    merged["price_changed"] = exists_both & (price_today != price_yesterday)
+
+    stock_today = merged["has_stock_today"].fillna(-1).astype(int)
+    stock_yesterday = merged["has_stock_yesterday"].fillna(-1).astype(int)
+    merged["stock_flipped"] = exists_both & (stock_today != stock_yesterday)
+
     merged["score_changed"] = exists_both & (merged["delta_score"].abs() >= 10)
 
     return merged
