@@ -233,12 +233,19 @@ def compute_deltas(today: pd.DataFrame, yesterday: pd.DataFrame) -> pd.DataFrame
     merged = today.merge(yesterday, on="SKU", suffixes=("_today", "_yesterday"), how="outer")
 
     merged["delta_score"] = merged["content_score_today"].fillna(0) - merged["content_score_yesterday"].fillna(0)
-    merged["newly_visible"] = (merged["is_visible_today"] == 1) & (merged["is_visible_yesterday"] == 0)
-    merged["no_longer_visible"] = (merged["is_visible_today"] == 0) & (merged["is_visible_yesterday"] == 1)
-    merged["image_changed"] = merged["has_image_today"] != merged["has_image_yesterday"]
-    merged["price_changed"] = merged["has_price_today"] != merged["has_price_yesterday"]
-    merged["stock_flipped"] = merged["has_stock_today"] != merged["has_stock_yesterday"]
-    merged["score_changed"] = merged["delta_score"].abs() >= 10
+
+    # SKUs that exist in both files (not new, not removed)
+    exists_both = merged["content_score_today"].notna() & merged["content_score_yesterday"].notna()
+
+    # Visibility changes (only for SKUs in both files)
+    merged["newly_visible"] = exists_both & (merged["is_visible_today"] == 1) & (merged["is_visible_yesterday"] == 0)
+    merged["no_longer_visible"] = exists_both & (merged["is_visible_today"] == 0) & (merged["is_visible_yesterday"] == 1)
+
+    # Attribute changes (only for SKUs in both files, otherwise NaN comparisons give false positives)
+    merged["image_changed"] = exists_both & (merged["has_image_today"] != merged["has_image_yesterday"])
+    merged["price_changed"] = exists_both & (merged["has_price_today"] != merged["has_price_yesterday"])
+    merged["stock_flipped"] = exists_both & (merged["has_stock_today"] != merged["has_stock_yesterday"])
+    merged["score_changed"] = exists_both & (merged["delta_score"].abs() >= 10)
 
     return merged
 
