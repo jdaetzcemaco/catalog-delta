@@ -320,6 +320,9 @@ if today_file and yesterday_file:
             "Top Priorities": today.loc[
                 (today["content_score"] < 80) & (today["is_visible"] == 1) & (today["has_stock"] == 1)
             ].sort_values("content_score").head(50),
+            "Stock Not Visible": today.loc[
+                (today["has_stock"] == 1) & (today["is_visible"] == 0)
+            ][["SKU", "content_score", "has_image", "has_price", "has_stock"]].sort_values("content_score", ascending=False),
         }
 
         # Change summary cards
@@ -337,6 +340,7 @@ if today_file and yesterday_file:
             st.metric("Stock Flips", len(sheets["Stock Flips"]))
             st.metric("Score Changes (±10+)", len(sheets["Score Changes"]))
         with change_cols[4]:
+            st.metric("Stock Not Visible", len(sheets["Stock Not Visible"]), help="⚠️ SKUs with stock but NOT visible - potential lost sales!")
             st.metric("Top Priorities", len(sheets["Top Priorities"]), help="Visible SKUs with stock but score < 80")
 
         # --- DETAILED TABLES ---
