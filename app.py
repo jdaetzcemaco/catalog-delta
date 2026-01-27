@@ -34,14 +34,10 @@ def save_to_google_sheets(summary: pd.DataFrame) -> bool:
     try:
         # Get credentials from Streamlit secrets
         creds_dict = dict(st.secrets["gcp_service_account"])
-        st.write("Debug: Connecting with service account:", creds_dict.get("client_email", "unknown"))
-        st.write("Debug: Project ID:", creds_dict.get("project_id", "unknown"))
-
         creds = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
         client = gspread.authorize(creds)
 
         # Open the spreadsheet
-        st.write(f"Debug: Opening spreadsheet ID: {GOOGLE_SHEET_ID}")
         try:
             spreadsheet = client.open_by_key(GOOGLE_SHEET_ID)
             sheet = spreadsheet.sheet1
@@ -62,7 +58,6 @@ def save_to_google_sheets(summary: pd.DataFrame) -> bool:
         perfect_score = int(summary["Score = 100"].iloc[0])
 
         # Get yesterday's values to calculate delta
-        st.write("Debug: Reading previous row for delta calculation...")
         all_rows = sheet.get_all_values()
 
         # Calculate deltas (default to 0 if no previous data)
@@ -108,8 +103,8 @@ def save_to_google_sheets(summary: pd.DataFrame) -> bool:
                     delta_stock_pct = round(with_stock_pct - prev_stock_pct, 2)
                     delta_score = round(avg_score - prev_score, 2)
                     delta_perfect = perfect_score - prev_perfect
-            except (ValueError, IndexError) as e:
-                st.write(f"Debug: Could not calculate delta: {e}")
+            except (ValueError, IndexError):
+                pass  # Use default delta values of 0
 
         # Prepare the row with deltas
         row = [
@@ -132,7 +127,6 @@ def save_to_google_sheets(summary: pd.DataFrame) -> bool:
         ]
 
         # Append the row
-        st.write(f"Debug: Appending row with deltas (Δ SKUs: {delta_skus:+d})...")
         sheet.append_row(row, value_input_option="USER_ENTERED")
         return True
     except KeyError as e:
@@ -218,6 +212,41 @@ if today_file and yesterday_file:
 
         st.success(f"Processed {len(today):,} SKUs from today, {len(yesterday):,} from yesterday")
 
+        # --- CALCULATE SKU CHANGES ---
+        # New SKUs = exist today but not yesterday
+        skus_today = set(today["SKU"])
+        skus_yesterday = set(yesterday["SKU"])
+        new_skus = skus_today - skus_yesterday
+        removed_skus = skus_yesterday - skus_today
+        net_sku_change = len(today) - len(yesterday)
+
+        # --- SKU CHANGE SUMMARY ---
+        st.header("🆕 SKU Changes (Today vs Yesterday)")
+        sku_cols = st.columns(3)
+        with sku_cols[0]:
+            st.metric(
+                "New SKUs",
+                f"{len(new_skus):,}",
+                delta=f"+{len(new_skus)}" if new_skus else None,
+                help="SKUs that exist today but didn't exist yesterday"
+            )
+        with sku_cols[1]:
+            st.metric(
+                "Removed SKUs",
+                f"{len(removed_skus):,}",
+                delta=f"-{len(removed_skus)}" if removed_skus else None,
+                delta_color="inverse",
+                help="SKUs that existed yesterday but don't exist today"
+            )
+        with sku_cols[2]:
+            st.metric(
+                "Net SKU Change",
+                f"{net_sku_change:+,}",
+                delta=f"{net_sku_change:+,}",
+                delta_color="normal" if net_sku_change >= 0 else "inverse",
+                help="Total SKUs today minus total SKUs yesterday"
+            )
+
         # --- KPI SUMMARY ---
         st.header("📈 Catalog Health Summary")
         summary = build_summary(today)
@@ -256,6 +285,8 @@ if today_file and yesterday_file:
         # Build all sheets
         sheets = {
             "Catalog Health": summary,
+            "New SKUs": today[today["SKU"].isin(new_skus)][["SKU", "content_score", "is_visible", "has_image", "has_price", "has_stock"]].copy(),
+            "Removed SKUs": yesterday[yesterday["SKU"].isin(removed_skus)][["SKU", "content_score", "is_visible", "has_image", "has_price", "has_stock"]].copy(),
             "No Longer Visible": filter_sheet(
                 merged,
                 merged["no_longer_visible"],
@@ -292,17 +323,20 @@ if today_file and yesterday_file:
         }
 
         # Change summary cards
-        change_cols = st.columns(4)
+        change_cols = st.columns(5)
         with change_cols[0]:
+            st.metric("New SKUs", len(sheets["New SKUs"]), delta=f"+{len(sheets['New SKUs'])}" if len(sheets["New SKUs"]) > 0 else None, help="SKUs added to catalog")
+            st.metric("Removed SKUs", len(sheets["Removed SKUs"]), delta=f"-{len(sheets['Removed SKUs'])}" if len(sheets["Removed SKUs"]) > 0 else None, delta_color="inverse", help="SKUs removed from catalog")
+        with change_cols[1]:
             st.metric("Newly Visible", len(sheets["Newly Visible"]), delta=f"+{len(sheets['Newly Visible'])}" if len(sheets["Newly Visible"]) > 0 else None)
             st.metric("No Longer Visible", len(sheets["No Longer Visible"]), delta=f"-{len(sheets['No Longer Visible'])}" if len(sheets["No Longer Visible"]) > 0 else None, delta_color="inverse")
-        with change_cols[1]:
+        with change_cols[2]:
             st.metric("Image Changes", len(sheets["Image Changes"]))
             st.metric("Price Changes", len(sheets["Price Changes"]))
-        with change_cols[2]:
+        with change_cols[3]:
             st.metric("Stock Flips", len(sheets["Stock Flips"]))
             st.metric("Score Changes (±10+)", len(sheets["Score Changes"]))
-        with change_cols[3]:
+        with change_cols[4]:
             st.metric("Top Priorities", len(sheets["Top Priorities"]), help="Visible SKUs with stock but score < 80")
 
         # --- DETAILED TABLES ---
