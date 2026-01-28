@@ -212,6 +212,30 @@ if today_file and yesterday_file:
 
         st.success(f"Processed {len(today):,} SKUs from today, {len(yesterday):,} from yesterday")
 
+        # --- DEBUG: Show data diagnostics ---
+        with st.expander("🔍 Debug: Data Diagnostics", expanded=False):
+            st.write("**Today's columns:**", list(today_raw.columns))
+            st.write("**Has Image values (today):**", today["has_image"].value_counts().to_dict())
+            st.write("**Has Price values (today):**", today["has_price"].value_counts().to_dict())
+            st.write("**Has Image values (yesterday):**", yesterday["has_image"].value_counts().to_dict())
+            st.write("**Has Price values (yesterday):**", yesterday["has_price"].value_counts().to_dict())
+
+            # Check merged data
+            skus_in_both = len(merged[merged["content_score_today"].notna() & merged["content_score_yesterday"].notna()])
+            st.write(f"**SKUs in both files:** {skus_in_both:,}")
+
+            # Sample where image or price might differ
+            sample_merged = merged[merged["content_score_today"].notna() & merged["content_score_yesterday"].notna()].head(10)
+            st.write("**Sample merged data (first 10 SKUs in both files):**")
+            st.dataframe(sample_merged[["SKU", "has_image_today", "has_image_yesterday", "has_price_today", "has_price_yesterday"]].head(10))
+
+            # Check if any differences exist
+            in_both = merged["content_score_today"].notna() & merged["content_score_yesterday"].notna()
+            img_diff = (merged.loc[in_both, "has_image_today"] != merged.loc[in_both, "has_image_yesterday"]).sum()
+            price_diff = (merged.loc[in_both, "has_price_today"] != merged.loc[in_both, "has_price_yesterday"]).sum()
+            st.write(f"**Raw image differences:** {img_diff}")
+            st.write(f"**Raw price differences:** {price_diff}")
+
         # --- CALCULATE SKU CHANGES ---
         # New SKUs = exist today but not yesterday
         skus_today = set(today["SKU"])
