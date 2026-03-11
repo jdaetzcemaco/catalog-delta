@@ -1,0 +1,540 @@
+{
+  "name": "Cemaco GA4 Landing Report",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 13 * * *"
+            }
+          ]
+        }
+      },
+      "id": "node-schedule",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "var-date-yesterday",
+              "name": "dateYesterday",
+              "value": "={{ $now.minus(1, 'day').toFormat('yyyy-MM-dd') }}",
+              "type": "string"
+            },
+            {
+              "id": "var-date-from",
+              "name": "dateFrom",
+              "value": "={{ $now.minus(1, 'day').startOf('day').toISO() }}",
+              "type": "string"
+            },
+            {
+              "id": "var-date-to",
+              "name": "dateTo",
+              "value": "={{ $now.minus(1, 'day').endOf('day').toISO() }}",
+              "type": "string"
+            },
+            {
+              "id": "var-is-monday",
+              "name": "isMonday",
+              "value": "={{ $now.weekday === 1 }}",
+              "type": "boolean"
+            },
+            {
+              "id": "var-week-start",
+              "name": "weekStart",
+              "value": "={{ $now.minus(1, 'week').startOf('week').toFormat('yyyy-MM-dd') }}",
+              "type": "string"
+            },
+            {
+              "id": "var-week-end",
+              "name": "weekEnd",
+              "value": "={{ $now.minus(1, 'week').endOf('week').toFormat('yyyy-MM-dd') }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "node-set-vars",
+      "name": "Set Variables",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://analyticsdata.googleapis.com/v1beta/properties/{{$env.GA4_PROPERTY_ID}}/runReport",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleAnalyticsOAuth2Api",
+        "sendBody": true,
+        "contentType": "application/json",
+        "body": "={\n  \"dimensions\": [\n    { \"name\": \"landingPage\" },\n    { \"name\": \"sessionDefaultChannelGroup\" },\n    { \"name\": \"sessionCampaign\" },\n    { \"name\": \"deviceCategory\" }\n  ],\n  \"metrics\": [\n    { \"name\": \"sessions\" },\n    { \"name\": \"activeUsers\" },\n    { \"name\": \"engagedSessions\" },\n    { \"name\": \"engagementRate\" },\n    { \"name\": \"purchases\" },\n    { \"name\": \"purchaseRevenue\" },\n    { \"name\": \"addToCarts\" },\n    { \"name\": \"sessionConversionRate\" }\n  ],\n  \"dateRanges\": [\n    {\n      \"startDate\": \"{{ $('Set Variables').item.json.dateYesterday }}\",\n      \"endDate\": \"{{ $('Set Variables').item.json.dateYesterday }}\"\n    }\n  ],\n  \"orderBys\": [\n    { \"metric\": { \"metricName\": \"purchaseRevenue\" }, \"desc\": true }\n  ],\n  \"limit\": 50\n}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": false
+            }
+          }
+        }
+      },
+      "id": "node-ga4-landings",
+      "name": "GA4 Landing Pages + Conversión",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [680, 200],
+      "credentials": {
+        "googleAnalyticsOAuth2Api": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "Google Analytics OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://analyticsdata.googleapis.com/v1beta/properties/{{$env.GA4_PROPERTY_ID}}/runReport",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleAnalyticsOAuth2Api",
+        "sendBody": true,
+        "contentType": "application/json",
+        "body": "={\n  \"dimensions\": [\n    { \"name\": \"sessionDefaultChannelGroup\" }\n  ],\n  \"metrics\": [\n    { \"name\": \"sessions\" },\n    { \"name\": \"purchases\" },\n    { \"name\": \"purchaseRevenue\" },\n    { \"name\": \"sessionConversionRate\" }\n  ],\n  \"dateRanges\": [\n    {\n      \"startDate\": \"{{ $('Set Variables').item.json.dateYesterday }}\",\n      \"endDate\": \"{{ $('Set Variables').item.json.dateYesterday }}\"\n    }\n  ],\n  \"orderBys\": [\n    { \"metric\": { \"metricName\": \"purchaseRevenue\" }, \"desc\": true }\n  ]\n}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": false
+            }
+          }
+        }
+      },
+      "id": "node-ga4-channels",
+      "name": "GA4 Channel Summary",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [680, 400],
+      "credentials": {
+        "googleAnalyticsOAuth2Api": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "Google Analytics OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://{{$env.VTEX_ACCOUNT_NAME}}.vtexcommercestable.com.br/api/oms/pvt/orders",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "f_status",
+              "value": "invoiced"
+            },
+            {
+              "name": "f_creationDate",
+              "value": "=creationDate:[{{ $('Set Variables').item.json.dateFrom }}] TO [{{ $('Set Variables').item.json.dateTo }}]"
+            },
+            {
+              "name": "per_page",
+              "value": "1"
+            },
+            {
+              "name": "page",
+              "value": "1"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-VTEX-API-AppKey",
+              "value": "={{$env.VTEX_APP_KEY}}"
+            },
+            {
+              "name": "X-VTEX-API-AppToken",
+              "value": "={{$env.VTEX_APP_TOKEN}}"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": false
+            }
+          }
+        }
+      },
+      "id": "node-vtex-validation",
+      "name": "VTEX Validación",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [680, 600]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ─── Procesar GA4 Landing Pages ───────────────────────────────────────────\nconst ga4Response = $input.first().json;\nconst vars = $('Set Variables').first().json;\n\nconst dimensionHeaders = ga4Response.dimensionHeaders || [];\nconst metricHeaders    = ga4Response.metricHeaders   || [];\nconst rows             = ga4Response.rows             || [];\n\n// Mapear índices\nconst dimIdx = {};\ndimensionHeaders.forEach((h, i) => { dimIdx[h.name] = i; });\nconst metIdx = {};\nmetricHeaders.forEach((h, i) => { metIdx[h.name] = i; });\n\n// Parsear cada fila\nconst landingRows = rows.map(row => {\n  const d = row.dimensionValues || [];\n  const m = row.metricValues    || [];\n\n  const sessions        = parseFloat(m[metIdx['sessions']]?.value        || '0');\n  const purchases       = parseFloat(m[metIdx['purchases']]?.value       || '0');\n  const revenue         = parseFloat(m[metIdx['purchaseRevenue']]?.value  || '0');\n  const engagedSessions = parseFloat(m[metIdx['engagedSessions']]?.value || '0');\n  const engagementRate  = parseFloat(m[metIdx['engagementRate']]?.value  || '0');\n  const addToCarts      = parseFloat(m[metIdx['addToCarts']]?.value      || '0');\n  const conversionRate  = parseFloat(m[metIdx['sessionConversionRate']]?.value || '0');\n\n  return {\n    date:             vars.dateYesterday,\n    landingPage:      d[dimIdx['landingPage']]?.value      || '(not set)',\n    channel:          d[dimIdx['sessionDefaultChannelGroup']]?.value || '(not set)',\n    campaign:         d[dimIdx['sessionCampaign']]?.value  || '(not set)',\n    device:           d[dimIdx['deviceCategory']]?.value   || '(not set)',\n    sessions,\n    engagedSessions,\n    engagementRate:   Math.round(engagementRate * 10000) / 10000,\n    purchases,\n    revenue:          Math.round(revenue * 100) / 100,\n    addToCarts,\n    conversionRate:   Math.round(conversionRate * 10000) / 10000,\n    revenuePerSession: sessions > 0 ? Math.round((revenue / sessions) * 100) / 100 : 0\n  };\n});\n\n// Calcular totales globales\nconst totalSessions   = landingRows.reduce((s, r) => s + r.sessions,  0);\nconst totalPurchases  = landingRows.reduce((s, r) => s + r.purchases, 0);\nconst totalRevenue    = Math.round(landingRows.reduce((s, r) => s + r.revenue, 0) * 100) / 100;\nconst avgConversionRate = totalSessions > 0\n  ? Math.round((totalPurchases / totalSessions) * 10000) / 10000\n  : 0;\n\n// Top landings\nconst byRevenue  = [...landingRows].sort((a, b) => b.revenue  - a.revenue);\nconst bySessions = [...landingRows].sort((a, b) => b.sessions - a.sessions);\n\n// Top channel (basado en revenue)\nconst channelRevenue = {};\nlandingRows.forEach(r => {\n  channelRevenue[r.channel] = (channelRevenue[r.channel] || 0) + r.revenue;\n});\nconst topChannel = Object.entries(channelRevenue)\n  .sort((a, b) => b[1] - a[1])[0]?.[0] || '(not set)';\n\nconst summary = {\n  date:                 vars.dateYesterday,\n  totalSessions,\n  totalPurchases,\n  totalRevenue,\n  avgConversionRate,\n  topLandingByRevenue:  byRevenue[0]?.landingPage  || '(none)',\n  topLandingBySessions: bySessions[0]?.landingPage || '(none)',\n  topChannel,\n  // Top 3 landings para el mensaje de Teams\n  top3Landings: byRevenue.slice(0, 3).map(r => ({\n    landingPage:    r.landingPage,\n    revenue:        r.revenue,\n    conversionRate: r.conversionRate,\n    sessions:       r.sessions\n  }))\n};\n\nreturn [\n  {\n    json: {\n      landingRows,\n      summary\n    }\n  }\n];",
+        "mode": "runOnceForAllItems"
+      },
+      "id": "node-fn-landings",
+      "name": "Procesar GA4 Landing Pages",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [920, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ─── Procesar GA4 Canales ─────────────────────────────────────────────────\nconst ga4Response = $input.first().json;\n\nconst dimensionHeaders = ga4Response.dimensionHeaders || [];\nconst metricHeaders    = ga4Response.metricHeaders   || [];\nconst rows             = ga4Response.rows             || [];\n\nconst dimIdx = {};\ndimensionHeaders.forEach((h, i) => { dimIdx[h.name] = i; });\nconst metIdx = {};\nmetricHeaders.forEach((h, i) => { metIdx[h.name] = i; });\n\n// Mapeo de grupos de canal GA4 → categorías propias\nconst channelMap = {\n  'Organic Search':  'organic',\n  'Direct':          'direct',\n  'Paid Search':     'paid',\n  'Paid Social':     'paid',\n  'Display':         'paid',\n  'Email':           'email',\n  'Organic Social':  'social',\n  'Referral':        'other',\n  'Affiliates':      'other',\n  '(Other)':         'other',\n  'Unassigned':      'other'\n};\n\nconst channels = {\n  organic: { sessions: 0, purchases: 0, revenue: 0, convRate: 0 },\n  paid:    { sessions: 0, purchases: 0, revenue: 0, convRate: 0 },\n  email:   { sessions: 0, purchases: 0, revenue: 0, convRate: 0 },\n  direct:  { sessions: 0, purchases: 0, revenue: 0, convRate: 0 },\n  social:  { sessions: 0, purchases: 0, revenue: 0, convRate: 0 },\n  other:   { sessions: 0, purchases: 0, revenue: 0, convRate: 0 }\n};\n\nrows.forEach(row => {\n  const d = row.dimensionValues || [];\n  const m = row.metricValues   || [];\n\n  const ga4Channel = d[dimIdx['sessionDefaultChannelGroup']]?.value || '(Other)';\n  const key        = channelMap[ga4Channel] || 'other';\n\n  const sessions  = parseFloat(m[metIdx['sessions']]?.value         || '0');\n  const purchases = parseFloat(m[metIdx['purchases']]?.value        || '0');\n  const revenue   = parseFloat(m[metIdx['purchaseRevenue']]?.value   || '0');\n  const convRate  = parseFloat(m[metIdx['sessionConversionRate']]?.value || '0');\n\n  channels[key].sessions  += sessions;\n  channels[key].purchases += purchases;\n  channels[key].revenue   += revenue;\n  // Promedio ponderado de tasa de conversión\n  if (channels[key].sessions > 0) {\n    channels[key].convRate =\n      Math.round((channels[key].purchases / channels[key].sessions) * 10000) / 10000;\n  }\n});\n\n// Redondear revenue\nObject.keys(channels).forEach(k => {\n  channels[k].revenue = Math.round(channels[k].revenue * 100) / 100;\n});\n\nreturn [{ json: { channels } }];",
+        "mode": "runOnceForAllItems"
+      },
+      "id": "node-fn-channels",
+      "name": "Procesar GA4 Canales",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [920, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ─── Validación VTEX vs GA4 ───────────────────────────────────────────────\nconst vtexResponse = $input.first().json;\nconst ga4Data      = $('Procesar GA4 Landing Pages').first().json;\n\nconst vtexTotalOrders = vtexResponse?.paging?.total ?? 0;\nconst ga4TotalPurchases = ga4Data.summary?.totalPurchases ?? 0;\n\nconst diferenciaAbsoluta = vtexTotalOrders - ga4TotalPurchases;\nconst diferenciaPct = vtexTotalOrders > 0\n  ? Math.round(Math.abs((vtexTotalOrders - ga4TotalPurchases) / vtexTotalOrders) * 10000) / 100\n  : 0;\n\nlet statusValidacion;\nif (diferenciaPct < 10) {\n  statusValidacion = '✅ OK';\n} else if (diferenciaPct <= 20) {\n  statusValidacion = '⚠️ REVISAR';\n} else {\n  statusValidacion = '🚨 ALERTA';\n}\n\nreturn [\n  {\n    json: {\n      vtexTotalOrders,\n      ga4TotalPurchases,\n      diferenciaAbsoluta,\n      diferenciaPct,\n      statusValidacion\n    }\n  }\n];",
+        "mode": "runOnceForAllItems"
+      },
+      "id": "node-fn-validation",
+      "name": "Validación VTEX vs GA4",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [920, 600]
+    },
+    {
+      "parameters": {
+        "resource": "workbook",
+        "operation": "addRows",
+        "workbookId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{$env.SHAREPOINT_FILE_ID}}"
+        },
+        "worksheetId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "daily_detail"
+        },
+        "keyRow": 1,
+        "dataStartRow": 2,
+        "options": {
+          "additionalFields": {}
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {
+            "date": "={{ $json.date }}",
+            "landingPage": "={{ $json.landingPage }}",
+            "channel": "={{ $json.channel }}",
+            "campaign": "={{ $json.campaign }}",
+            "device": "={{ $json.device }}",
+            "sessions": "={{ $json.sessions }}",
+            "engagedSessions": "={{ $json.engagedSessions }}",
+            "engagementRate": "={{ $json.engagementRate }}",
+            "purchases": "={{ $json.purchases }}",
+            "revenue": "={{ $json.revenue }}",
+            "addToCarts": "={{ $json.addToCarts }}",
+            "conversionRate": "={{ $json.conversionRate }}",
+            "revenuePerSession": "={{ $json.revenuePerSession }}"
+          }
+        }
+      },
+      "id": "node-excel-detail",
+      "name": "Excel — daily_detail",
+      "type": "n8n-nodes-base.microsoftExcel",
+      "typeVersion": 2,
+      "position": [1160, 200],
+      "credentials": {
+        "microsoftExcelOAuth2Api": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "Microsoft Excel OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "workbook",
+        "operation": "addRows",
+        "workbookId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{$env.SHAREPOINT_FILE_ID}}"
+        },
+        "worksheetId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "daily_summary"
+        },
+        "keyRow": 1,
+        "dataStartRow": 2,
+        "options": {
+          "additionalFields": {}
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "date": "={{ $('Procesar GA4 Landing Pages').first().json.summary.date }}",
+            "totalSessions": "={{ $('Procesar GA4 Landing Pages').first().json.summary.totalSessions }}",
+            "totalPurchases": "={{ $('Procesar GA4 Landing Pages').first().json.summary.totalPurchases }}",
+            "totalRevenue": "={{ $('Procesar GA4 Landing Pages').first().json.summary.totalRevenue }}",
+            "avgConversionRate": "={{ $('Procesar GA4 Landing Pages').first().json.summary.avgConversionRate }}",
+            "topLandingByRevenue": "={{ $('Procesar GA4 Landing Pages').first().json.summary.topLandingByRevenue }}",
+            "topChannel": "={{ $('Procesar GA4 Landing Pages').first().json.summary.topChannel }}",
+            "vtexOrders": "={{ $('Validación VTEX vs GA4').first().json.vtexTotalOrders }}",
+            "ga4Purchases": "={{ $('Validación VTEX vs GA4').first().json.ga4TotalPurchases }}",
+            "diferenciaPct": "={{ $('Validación VTEX vs GA4').first().json.diferenciaPct }}",
+            "statusValidacion": "={{ $('Validación VTEX vs GA4').first().json.statusValidacion }}",
+            "organic_revenue": "={{ $('Procesar GA4 Canales').first().json.channels.organic.revenue }}",
+            "paid_revenue": "={{ $('Procesar GA4 Canales').first().json.channels.paid.revenue }}",
+            "email_revenue": "={{ $('Procesar GA4 Canales').first().json.channels.email.revenue }}",
+            "direct_revenue": "={{ $('Procesar GA4 Canales').first().json.channels.direct.revenue }}"
+          }
+        }
+      },
+      "id": "node-excel-summary",
+      "name": "Excel — daily_summary",
+      "type": "n8n-nodes-base.microsoftExcel",
+      "typeVersion": 2,
+      "position": [1160, 420],
+      "credentials": {
+        "microsoftExcelOAuth2Api": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "Microsoft Excel OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-is-monday",
+              "leftValue": "={{ $('Set Variables').item.json.isMonday }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equal"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "node-if-monday",
+      "name": "¿Es lunes?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1380, 300]
+    },
+    {
+      "parameters": {
+        "resource": "workbook",
+        "operation": "getRows",
+        "workbookId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{$env.SHAREPOINT_FILE_ID}}"
+        },
+        "worksheetId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "daily_summary"
+        },
+        "returnAll": false,
+        "limit": 7,
+        "options": {
+          "readAsString": false
+        }
+      },
+      "id": "node-excel-read-weekly",
+      "name": "Leer últimos 7 días del Excel",
+      "type": "n8n-nodes-base.microsoftExcel",
+      "typeVersion": 2,
+      "position": [1600, 160],
+      "credentials": {
+        "microsoftExcelOAuth2Api": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "Microsoft Excel OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// ─── Agregar datos semanales para mensaje de Teams ────────────────────────\nconst weekRows = $input.all().map(item => item.json);\nconst vars     = $('Set Variables').first().json;\n\nif (!weekRows.length) {\n  return [{ json: { weeklyStats: null, weekStart: vars.weekStart, weekEnd: vars.weekEnd } }];\n}\n\nconst sumRevenue    = weekRows.reduce((s, r) => s + (parseFloat(r.totalRevenue) || 0), 0);\nconst sumPurchases  = weekRows.reduce((s, r) => s + (parseFloat(r.totalPurchases) || 0), 0);\nconst sumSessions   = weekRows.reduce((s, r) => s + (parseFloat(r.totalSessions) || 0), 0);\nconst avgConversion = sumSessions > 0\n  ? Math.round((sumPurchases / sumSessions) * 10000) / 100\n  : 0;\n\n// Revenue por canal acumulado\nconst organicRevTotal = weekRows.reduce((s, r) => s + (parseFloat(r.organic_revenue) || 0), 0);\nconst paidRevTotal    = weekRows.reduce((s, r) => s + (parseFloat(r.paid_revenue)    || 0), 0);\nconst emailRevTotal   = weekRows.reduce((s, r) => s + (parseFloat(r.email_revenue)   || 0), 0);\nconst directRevTotal  = weekRows.reduce((s, r) => s + (parseFloat(r.direct_revenue)  || 0), 0);\n\nconst totalRevForPct = sumRevenue || 1;\nconst organicPct = Math.round((organicRevTotal / totalRevForPct) * 10000) / 100;\nconst paidPct    = Math.round((paidRevTotal    / totalRevForPct) * 10000) / 100;\nconst emailPct   = Math.round((emailRevTotal   / totalRevForPct) * 10000) / 100;\nconst directPct  = Math.round((directRevTotal  / totalRevForPct) * 10000) / 100;\n\n// Top 3 landings de la semana (agrupado por landingPage)\nconst landingMap = {};\nweekRows.forEach(r => {\n  const key = r.topLandingByRevenue || '(none)';\n  if (!landingMap[key]) landingMap[key] = { landingPage: key, revenue: 0, purchases: 0 };\n  landingMap[key].revenue   += parseFloat(r.totalRevenue)   || 0;\n  landingMap[key].purchases += parseFloat(r.totalPurchases) || 0;\n});\nconst top3 = Object.values(landingMap)\n  .sort((a, b) => b.revenue - a.revenue)\n  .slice(0, 3);\n\n// Diferencia promedio VTEX vs GA4\nconst avgDifPct = weekRows.length > 0\n  ? Math.round(\n      weekRows.reduce((s, r) => s + (parseFloat(r.diferenciaPct) || 0), 0) / weekRows.length * 100\n    ) / 100\n  : 0;\n\nreturn [{\n  json: {\n    weekStart: vars.weekStart,\n    weekEnd:   vars.weekEnd,\n    sumRevenue:    Math.round(sumRevenue * 100) / 100,\n    sumPurchases,\n    sumSessions,\n    avgConversion,\n    organicRevTotal: Math.round(organicRevTotal * 100) / 100,\n    paidRevTotal:    Math.round(paidRevTotal * 100) / 100,\n    emailRevTotal:   Math.round(emailRevTotal * 100) / 100,\n    directRevTotal:  Math.round(directRevTotal * 100) / 100,\n    organicPct,\n    paidPct,\n    emailPct,\n    directPct,\n    top3,\n    avgDifPct\n  }\n}];\n",
+        "mode": "runOnceForAllItems"
+      },
+      "id": "node-fn-weekly-stats",
+      "name": "Calcular estadísticas semanales",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1820, 160]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.TEAMS_WEBHOOK_URL}}",
+        "sendBody": true,
+        "contentType": "application/json",
+        "body": "={\n  \"type\": \"message\",\n  \"attachments\": [\n    {\n      \"contentType\": \"application/vnd.microsoft.card.adaptive\",\n      \"content\": {\n        \"$schema\": \"http://adaptivecards.io/schemas/adaptive-card.json\",\n        \"type\": \"AdaptiveCard\",\n        \"version\": \"1.4\",\n        \"body\": [\n          {\n            \"type\": \"TextBlock\",\n            \"text\": \"📊 Weekly Landing Report — {{ $json.weekStart }} al {{ $json.weekEnd }}\",\n            \"weight\": \"Bolder\",\n            \"size\": \"Large\",\n            \"color\": \"Accent\"\n          },\n          {\n            \"type\": \"TextBlock\",\n            \"text\": \"💰 Revenue & Conversión (7 días)\",\n            \"weight\": \"Bolder\",\n            \"separator\": true\n          },\n          {\n            \"type\": \"FactSet\",\n            \"facts\": [\n              { \"title\": \"Revenue total GA4:\", \"value\": \"Q{{ $json.sumRevenue }}\" },\n              { \"title\": \"Purchases totales:\", \"value\": \"{{ $json.sumPurchases }}\" },\n              { \"title\": \"Sesiones totales:\",  \"value\": \"{{ $json.sumSessions }}\" },\n              { \"title\": \"Conversión promedio:\", \"value\": \"{{ $json.avgConversion }}%\" }\n            ]\n          },\n          {\n            \"type\": \"TextBlock\",\n            \"text\": \"🏆 Top Landings de la semana\",\n            \"weight\": \"Bolder\",\n            \"separator\": true\n          },\n          {\n            \"type\": \"TextBlock\",\n            \"text\": \"1. {{ $json.top3[0].landingPage }} — Q{{ $json.top3[0].revenue }}\\n2. {{ $json.top3[1].landingPage }} — Q{{ $json.top3[1].revenue }}\\n3. {{ $json.top3[2].landingPage }} — Q{{ $json.top3[2].revenue }}\",\n            \"wrap\": true\n          },\n          {\n            \"type\": \"TextBlock\",\n            \"text\": \"📣 Performance por Canal\",\n            \"weight\": \"Bolder\",\n            \"separator\": true\n          },\n          {\n            \"type\": \"FactSet\",\n            \"facts\": [\n              { \"title\": \"Orgánico:\", \"value\": \"Q{{ $json.organicRevTotal }} ({{ $json.organicPct }}% del total)\" },\n              { \"title\": \"Paid:\",     \"value\": \"Q{{ $json.paidRevTotal }} ({{ $json.paidPct }}% del total)\" },\n              { \"title\": \"Email:\",    \"value\": \"Q{{ $json.emailRevTotal }} ({{ $json.emailPct }}% del total)\" },\n              { \"title\": \"Directo:\",  \"value\": \"Q{{ $json.directRevTotal }} ({{ $json.directPct }}% del total)\" }\n            ]\n          },\n          {\n            \"type\": \"TextBlock\",\n            \"text\": \"✅ Validación VTEX vs GA4: {{ $json.avgDifPct }}% diferencia promedio\",\n            \"color\": \"Good\",\n            \"separator\": true\n          }\n        ]\n      }\n    }\n  ]\n}",
+        "options": {}
+      },
+      "id": "node-teams-weekly",
+      "name": "Teams — Mensaje Semanal",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2040, 160]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ─── Construir payload para mensaje diario de Teams ───────────────────────\nconst ga4Data    = $('Procesar GA4 Landing Pages').first().json;\nconst channels   = $('Procesar GA4 Canales').first().json.channels;\nconst validation = $('Validación VTEX vs GA4').first().json;\nconst summary    = ga4Data.summary;\nconst top3       = summary.top3Landings || [];\n\n// Asegurar que hay 3 entradas para el template\nwhile (top3.length < 3) {\n  top3.push({ landingPage: '(sin datos)', revenue: 0, conversionRate: 0 });\n}\n\nreturn [{\n  json: {\n    date:             summary.date,\n    totalRevenue:     summary.totalRevenue,\n    totalPurchases:   summary.totalPurchases,\n    totalSessions:    summary.totalSessions,\n    avgConversionRate: Math.round(summary.avgConversionRate * 100 * 100) / 100,\n    topChannel:       summary.topChannel,\n    paid_rev:         channels.paid.revenue,\n    organic_rev:      channels.organic.revenue,\n    landing_1:        top3[0].landingPage,\n    rev_1:            top3[0].revenue,\n    conv_1:           Math.round(top3[0].conversionRate * 100 * 100) / 100,\n    landing_2:        top3[1].landingPage,\n    rev_2:            top3[1].revenue,\n    conv_2:           Math.round(top3[1].conversionRate * 100 * 100) / 100,\n    landing_3:        top3[2].landingPage,\n    rev_3:            top3[2].revenue,\n    conv_3:           Math.round(top3[2].conversionRate * 100 * 100) / 100,\n    statusValidacion: validation.statusValidacion,\n    vtexOrders:       validation.vtexTotalOrders,\n    ga4Purchases:     validation.ga4TotalPurchases\n  }\n}];\n",
+        "mode": "runOnceForAllItems"
+      },
+      "id": "node-fn-daily-payload",
+      "name": "Preparar payload diario",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1820, 420]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.TEAMS_WEBHOOK_URL}}",
+        "sendBody": true,
+        "contentType": "application/json",
+        "body": "={\n  \"type\": \"message\",\n  \"attachments\": [\n    {\n      \"contentType\": \"application/vnd.microsoft.card.adaptive\",\n      \"content\": {\n        \"$schema\": \"http://adaptivecards.io/schemas/adaptive-card.json\",\n        \"type\": \"AdaptiveCard\",\n        \"version\": \"1.4\",\n        \"body\": [\n          {\n            \"type\": \"TextBlock\",\n            \"text\": \"⚡ Daily Landing Report — {{ $json.date }}\",\n            \"weight\": \"Bolder\",\n            \"size\": \"Large\",\n            \"color\": \"Accent\"\n          },\n          {\n            \"type\": \"TextBlock\",\n            \"text\": \"💰 Revenue del día\",\n            \"weight\": \"Bolder\",\n            \"separator\": true\n          },\n          {\n            \"type\": \"FactSet\",\n            \"facts\": [\n              { \"title\": \"GA4 Revenue:\",  \"value\": \"Q{{ $json.totalRevenue }}\" },\n              { \"title\": \"Purchases:\",    \"value\": \"{{ $json.totalPurchases }}\" },\n              { \"title\": \"Sesiones:\",     \"value\": \"{{ $json.totalSessions }}\" },\n              { \"title\": \"Conversión:\",   \"value\": \"{{ $json.avgConversionRate }}%\" }\n            ]\n          },\n          {\n            \"type\": \"TextBlock\",\n            \"text\": \"🏆 Top 3 Landings\",\n            \"weight\": \"Bolder\",\n            \"separator\": true\n          },\n          {\n            \"type\": \"TextBlock\",\n            \"text\": \"1. {{ $json.landing_1 }} — Q{{ $json.rev_1 }} — {{ $json.conv_1 }}%\\n2. {{ $json.landing_2 }} — Q{{ $json.rev_2 }} — {{ $json.conv_2 }}%\\n3. {{ $json.landing_3 }} — Q{{ $json.rev_3 }} — {{ $json.conv_3 }}%\",\n            \"wrap\": true\n          },\n          {\n            \"type\": \"TextBlock\",\n            \"text\": \"📣 Canal líder hoy: {{ $json.topChannel }}\",\n            \"weight\": \"Bolder\",\n            \"separator\": true\n          },\n          {\n            \"type\": \"FactSet\",\n            \"facts\": [\n              { \"title\": \"Paid:\",     \"value\": \"Q{{ $json.paid_rev }}\" },\n              { \"title\": \"Orgánico:\", \"value\": \"Q{{ $json.organic_rev }}\" }\n            ]\n          },\n          {\n            \"type\": \"TextBlock\",\n            \"text\": \"{{ $json.statusValidacion }} VTEX: {{ $json.vtexOrders }} órdenes vs GA4: {{ $json.ga4Purchases }} purchases\",\n            \"separator\": true,\n            \"wrap\": true\n          }\n        ]\n      }\n    }\n  ]\n}",
+        "options": {}
+      },
+      "id": "node-teams-daily",
+      "name": "Teams — Mensaje Diario",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2040, 420]
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          { "node": "Set Variables", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Set Variables": {
+      "main": [
+        [
+          { "node": "GA4 Landing Pages + Conversión", "type": "main", "index": 0 },
+          { "node": "GA4 Channel Summary",            "type": "main", "index": 0 },
+          { "node": "VTEX Validación",                "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "GA4 Landing Pages + Conversión": {
+      "main": [
+        [
+          { "node": "Procesar GA4 Landing Pages", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "GA4 Channel Summary": {
+      "main": [
+        [
+          { "node": "Procesar GA4 Canales", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "VTEX Validación": {
+      "main": [
+        [
+          { "node": "Validación VTEX vs GA4", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Procesar GA4 Landing Pages": {
+      "main": [
+        [
+          { "node": "Excel — daily_detail", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Excel — daily_detail": {
+      "main": [
+        [
+          { "node": "Excel — daily_summary", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Excel — daily_summary": {
+      "main": [
+        [
+          { "node": "¿Es lunes?", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "¿Es lunes?": {
+      "main": [
+        [
+          { "node": "Leer últimos 7 días del Excel", "type": "main", "index": 0 }
+        ],
+        [
+          { "node": "Preparar payload diario", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Leer últimos 7 días del Excel": {
+      "main": [
+        [
+          { "node": "Calcular estadísticas semanales", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Calcular estadísticas semanales": {
+      "main": [
+        [
+          { "node": "Teams — Mensaje Semanal", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Teams — Mensaje Semanal": {
+      "main": [
+        [
+          { "node": "Preparar payload diario", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Preparar payload diario": {
+      "main": [
+        [
+          { "node": "Teams — Mensaje Diario", "type": "main", "index": 0 }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    { "createdAt": "2026-03-11T00:00:00.000Z", "updatedAt": "2026-03-11T00:00:00.000Z", "id": "tag-cemaco", "name": "cemaco" },
+    { "createdAt": "2026-03-11T00:00:00.000Z", "updatedAt": "2026-03-11T00:00:00.000Z", "id": "tag-ga4",    "name": "ga4" }
+  ],
+  "triggerCount": 1,
+  "updatedAt": "2026-03-11T00:00:00.000Z",
+  "versionId": "1"
+}
