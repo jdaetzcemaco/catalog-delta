@@ -1,3 +1,6 @@
+# Streamlit secrets (never commit passwords/keys)
+.streamlit/secrets.toml
+
 # Data files (don't commit sensitive catalog data)
 *.xlsx
 *.csv

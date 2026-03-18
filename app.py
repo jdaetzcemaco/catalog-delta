@@ -4,6 +4,7 @@ Streamlit web interface for the Catalog Delta Report Generator.
 Run with: streamlit run app.py
 """
 
+import fnmatch
 import io
 from datetime import datetime
 
@@ -12,6 +13,14 @@ import streamlit as st
 import gspread
 import gspread.exceptions
 from google.oauth2.service_account import Credentials
+
+try:
+    from office365.runtime.auth.client_credential import ClientCredential
+    from office365.sharepoint.client_context import ClientContext
+    from office365.sharepoint.files.file import File as SharePointFile
+    _ONEDRIVE_AVAILABLE = True
+except ImportError:
+    _ONEDRIVE_AVAILABLE = False
 
 from catalog_delta import (
     build_flags,
@@ -27,6 +36,104 @@ SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/drive",
 ]
+
+# OneDrive folder path (server-relative URL)
+ONEDRIVE_FOLDER = "/cemaco-reports/incoming"
+
+
+class NamedBytesIO(io.BytesIO):
+    """BytesIO with a .name attribute so it works like an UploadedFile."""
+    def __init__(self, content: bytes, name: str):
+        super().__init__(content)
+        self.name = name
+
+
+@st.cache_resource(show_spinner=False)
+def load_from_onedrive() -> dict:
+    """
+    Try to auto-load files from OneDrive for Business.
+
+    Returns a dict with keys: today, today_name, yesterday, yesterday_name,
+    diseno, diseno_name, edicion, edicion_name, loaded, error.
+    All file values are raw bytes or None.
+
+    Requires st.secrets["onedrive"] with keys: site_url, client_id, client_secret.
+    """
+    result = {
+        "today": None, "today_name": "",
+        "yesterday": None, "yesterday_name": "",
+        "diseno": None, "diseno_name": "",
+        "edicion": None, "edicion_name": "",
+        "loaded": False, "error": None,
+    }
+
+    if not _ONEDRIVE_AVAILABLE:
+        result["error"] = "office365 library not installed"
+        return result
+
+    try:
+        if "onedrive" not in st.secrets:
+            return result  # Not configured — silently skip
+
+        od = st.secrets["onedrive"]
+        site_url = od["site_url"]
+        client_id = od["client_id"]
+        client_secret = od["client_secret"]
+
+        ctx = ClientContext(site_url).with_credentials(
+            ClientCredential(client_id, client_secret)
+        )
+
+        # List files in the incoming folder
+        folder = ctx.web.get_folder_by_server_relative_url(ONEDRIVE_FOLDER)
+        files = folder.files
+        ctx.load(files)
+        ctx.execute_query()
+
+        file_infos = []
+        for f in files:
+            name = f.properties.get("Name", "")
+            modified = f.properties.get("TimeLastModified", "")
+            rel_url = f.properties.get("ServerRelativeUrl", "")
+            file_infos.append((name, modified, rel_url))
+
+        def _download(rel_url: str) -> bytes:
+            response = SharePointFile.open_binary(ctx, rel_url)
+            return response.content
+
+        def _find(pattern: str) -> list:
+            matched = [(n, m, u) for n, m, u in file_infos if fnmatch.fnmatch(n, pattern)]
+            return sorted(matched, key=lambda x: x[1], reverse=True)
+
+        # Catalog files — most recent = today, second = yesterday
+        catalog_files = _find("catalog-daily-*.xlsx")
+        if catalog_files:
+            result["today"] = _download(catalog_files[0][2])
+            result["today_name"] = catalog_files[0][0]
+            if len(catalog_files) > 1:
+                result["yesterday"] = _download(catalog_files[1][2])
+                result["yesterday_name"] = catalog_files[1][0]
+
+        # Diseño productivity file
+        diseno_files = _find("productivity-diseno-*.xlsx")
+        if diseno_files:
+            result["diseno"] = _download(diseno_files[0][2])
+            result["diseno_name"] = diseno_files[0][0]
+
+        # Edición productivity file
+        edicion_files = _find("productivity-edicion-*.xlsx")
+        if edicion_files:
+            result["edicion"] = _download(edicion_files[0][2])
+            result["edicion_name"] = edicion_files[0][0]
+
+        result["loaded"] = any([
+            result["today"], result["diseno"], result["edicion"]
+        ])
+
+    except Exception as exc:
+        result["error"] = str(exc)
+
+    return result
 
 
 def save_to_google_sheets(summary: pd.DataFrame) -> bool:
@@ -144,9 +251,27 @@ st.set_page_config(
     layout="wide",
 )
 
+# --- AUTH ---
+if not st.session_state.get("authenticated"):
+    st.title("🔐 Catalog Delta Report")
+    pwd = st.text_input("Password", type="password", placeholder="Enter access password")
+    if st.button("Login", type="primary"):
+        if pwd == st.secrets.get("app_password", ""):
+            st.session_state.authenticated = True
+            st.rerun()
+        else:
+            st.error("Incorrect password")
+    st.stop()
+
 # --- HEADER ---
 st.title("📊 Catalog Delta Report Generator")
 st.markdown("Upload your **today** and **yesterday** catalog files to generate a comparison report.")
+
+# --- ONEDRIVE AUTO-LOAD (once per session) ---
+if "od_data" not in st.session_state:
+    with st.spinner("Checking OneDrive for latest files…"):
+        st.session_state.od_data = load_from_onedrive()
+od_data: dict = st.session_state.od_data
 
 # --- FILE UPLOADERS ---
 col1, col2 = st.columns(2)
@@ -168,6 +293,39 @@ with col2:
         key="yesterday",
         help="Excel (.xlsx) or CSV file with SKU data",
     )
+
+col3, col4 = st.columns(2)
+
+with col3:
+    st.subheader("📋 Diseño Team")
+    diseno_file = st.file_uploader(
+        "Upload Diseño productivity report",
+        type=["xlsx"],
+        key="diseno",
+        help="Daily productivity file for Diseño team",
+    )
+
+with col4:
+    st.subheader("📋 Edición Team")
+    edicion_file = st.file_uploader(
+        "Upload Edición productivity report",
+        type=["xlsx"],
+        key="edicion",
+        help="Daily productivity file for Edición team",
+    )
+
+# --- SIDEBAR: File Status ---
+with st.sidebar:
+    if od_data.get("loaded"):
+        st.success("✅ Auto-loaded from OneDrive")
+    elif od_data.get("error"):
+        st.caption(f"OneDrive: {od_data['error']}")
+
+    st.header("📬 File Status")
+    st.write("Today Catalog:", "✅ Uploaded" if (today_file or od_data.get("today")) else "⏳ Pending")
+    st.write("Yesterday Catalog:", "✅ Uploaded" if (yesterday_file or od_data.get("yesterday")) else "⏳ Pending")
+    st.write("Diseño Team:", "✅ Uploaded" if (diseno_file or od_data.get("diseno")) else "⏳ Pending (optional)")
+    st.write("Edición Team:", "✅ Uploaded" if (edicion_file or od_data.get("edicion")) else "⏳ Pending (optional)")
 
 
 def load_uploaded_file(uploaded_file) -> pd.DataFrame:
@@ -192,17 +350,227 @@ def generate_excel_download(sheets: dict[str, pd.DataFrame]) -> bytes:
     return output.getvalue()
 
 
+def load_productivity_file(source) -> pd.DataFrame:
+    """
+    Load a productivity DataFrame from an uploaded file or raw bytes.
+    Strips whitespace from column names but does NOT uppercase them,
+    preserving angle-bracket columns like <ID> and <Name>.
+    """
+    if isinstance(source, (bytes, bytearray)):
+        df = pd.read_excel(io.BytesIO(source))
+    else:
+        df = pd.read_excel(source)
+    df.columns = [c.strip() for c in df.columns]
+    return df
+
+
+def render_productivity_tab(diseno_df: pd.DataFrame | None, edicion_df: pd.DataFrame | None) -> None:
+    """Render the 👥 Team Productivity tab content (sections A–F)."""
+
+    both = diseno_df is not None and edicion_df is not None
+    diseno_ids: set = set(diseno_df["<ID>"]) if diseno_df is not None else set()
+    edicion_ids: set = set(edicion_df["<ID>"]) if edicion_df is not None else set()
+
+    # ── A. SKUs por Usuario ──────────────────────────────────────────────────
+    st.subheader("A. SKUs por Usuario")
+    try:
+        col_a1, col_a2 = st.columns(2)
+        d_by_user = None
+        e_by_user = None
+
+        if diseno_df is not None:
+            d_by_user = (
+                diseno_df.groupby("Usuario")["<ID>"]
+                .count()
+                .reset_index(name="SKU Count")
+                .sort_values("SKU Count", ascending=False)
+            )
+            with col_a1:
+                st.caption("Diseño")
+                st.dataframe(d_by_user, hide_index=True, use_container_width=True)
+
+        if edicion_df is not None:
+            e_by_user = (
+                edicion_df.groupby("Usuario")["<ID>"]
+                .count()
+                .reset_index(name="SKU Count")
+                .sort_values("SKU Count", ascending=False)
+            )
+            with col_a2:
+                st.caption("Edición")
+                st.dataframe(e_by_user, hide_index=True, use_container_width=True)
+
+        if d_by_user is not None and e_by_user is not None:
+            chart_df = pd.concat([
+                d_by_user.assign(Team="Diseño"),
+                e_by_user.assign(Team="Edición"),
+            ])
+            st.bar_chart(chart_df, x="Usuario", y="SKU Count", color="Team")
+        elif d_by_user is not None:
+            st.bar_chart(d_by_user.set_index("Usuario")["SKU Count"])
+        elif e_by_user is not None:
+            st.bar_chart(e_by_user.set_index("Usuario")["SKU Count"])
+    except Exception as exc:
+        st.warning(f"No se pudo calcular SKUs por Usuario: {exc}")
+
+    st.divider()
+
+    # ── B. SKUs Repetidos entre Equipos ────────────────────────────────────
+    st.subheader("B. SKUs Repetidos entre Equipos")
+    if both:
+        try:
+            repeated_ids = diseno_ids & edicion_ids
+            st.metric("SKUs en ambos equipos", len(repeated_ids))
+            if repeated_ids:
+                rep_df = (
+                    diseno_df[diseno_df["<ID>"].isin(repeated_ids)][["<ID>", "<Name>", "Categoría"]]
+                    .drop_duplicates("<ID>")
+                    .reset_index(drop=True)
+                )
+                st.dataframe(rep_df, hide_index=True, use_container_width=True)
+        except Exception as exc:
+            st.warning(f"No se pudo calcular SKUs repetidos: {exc}")
+    else:
+        st.info("ℹ️ Sube ambos archivos de productividad para ver SKUs repetidos.")
+
+    st.divider()
+
+    # ── C. SKUs que NO pasaron por ambos equipos ───────────────────────────
+    st.subheader("C. SKUs que NO pasaron por ambos equipos")
+    if both:
+        try:
+            solo_d_ids = diseno_ids - edicion_ids
+            solo_e_ids = edicion_ids - diseno_ids
+            col_c1, col_c2 = st.columns(2)
+            with col_c1:
+                st.caption(f"Solo Diseño — {len(solo_d_ids):,} SKUs")
+                solo_d = diseno_df[diseno_df["<ID>"].isin(solo_d_ids)]
+                cat_d = (
+                    solo_d.groupby("Categoría")["<ID>"]
+                    .count()
+                    .reset_index(name="Cantidad")
+                    .sort_values("Cantidad", ascending=False)
+                )
+                st.dataframe(cat_d, hide_index=True, use_container_width=True)
+            with col_c2:
+                st.caption(f"Solo Edición — {len(solo_e_ids):,} SKUs")
+                solo_e = edicion_df[edicion_df["<ID>"].isin(solo_e_ids)]
+                cat_e = (
+                    solo_e.groupby("Categoría")["<ID>"]
+                    .count()
+                    .reset_index(name="Cantidad")
+                    .sort_values("Cantidad", ascending=False)
+                )
+                st.dataframe(cat_e, hide_index=True, use_container_width=True)
+        except Exception as exc:
+            st.warning(f"No se pudo calcular SKUs por equipo: {exc}")
+    else:
+        st.info("ℹ️ Sube ambos archivos de productividad para ver esta sección.")
+
+    st.divider()
+
+    # ── D. SKUs con Inventario Omnicanal ────────────────────────────────────
+    st.subheader("D. SKUs con Inventario Omnicanal")
+    try:
+        omni_frames = []
+        for df, team in [(diseno_df, "Diseño"), (edicion_df, "Edición")]:
+            if df is not None:
+                omni = df[pd.to_numeric(df["Total Omnicanal"], errors="coerce") > 0].copy()
+                omni = omni.assign(Team=team)[["<ID>", "<Name>", "Team", "Total Omnicanal"]]
+                omni_frames.append(omni)
+        if omni_frames:
+            all_omni = pd.concat(omni_frames).drop_duplicates("<ID>").reset_index(drop=True)
+            st.metric("SKUs únicos con inventario omnicanal", len(all_omni))
+            st.dataframe(all_omni, hide_index=True, use_container_width=True)
+        else:
+            st.info("Sin SKUs con inventario omnicanal.")
+    except Exception as exc:
+        st.warning(f"No se pudo calcular inventario omnicanal: {exc}")
+
+    st.divider()
+
+    # ── E. SKUs Únicos del Día ───────────────────────────────────────────────
+    st.subheader("E. SKUs Únicos del Día")
+    try:
+        all_ids = diseno_ids | edicion_ids
+        st.metric("Total SKUs únicos trabajados hoy", len(all_ids))
+        if both:
+            only_d = len(diseno_ids - edicion_ids)
+            both_t = len(diseno_ids & edicion_ids)
+            only_e = len(edicion_ids - diseno_ids)
+            m1, m2, m3 = st.columns(3)
+            m1.metric("Solo Diseño", only_d)
+            m2.metric("Ambos Equipos", both_t)
+            m3.metric("Solo Edición", only_e)
+    except Exception as exc:
+        st.warning(f"No se pudo calcular SKUs únicos: {exc}")
+
+    st.divider()
+
+    # ── F. SKUs que Salieron del Flujo ──────────────────────────────────────
+    st.subheader("F. SKUs que Salieron del Flujo")
+    try:
+        flujo_col = "Fecha de Salida del Flujo de"
+        flujo_frames = []
+        for df, team in [(diseno_df, "Diseño"), (edicion_df, "Edición")]:
+            if df is not None:
+                mask = df[flujo_col].notna() & (df[flujo_col].astype(str).str.strip() != "")
+                flujo = df[mask].copy()
+                flujo["Team"] = team
+                flujo_frames.append(flujo[["<ID>", "<Name>", "Categoría", "Usuario", flujo_col, "Team"]])
+        if flujo_frames:
+            flujo_all = (
+                pd.concat(flujo_frames)
+                .sort_values(flujo_col, ascending=False)
+                .reset_index(drop=True)
+            )
+            st.metric("SKUs que salieron del flujo", len(flujo_all))
+            st.dataframe(flujo_all, hide_index=True, use_container_width=True)
+        else:
+            st.info("Ningún SKU ha salido del flujo.")
+    except Exception as exc:
+        st.warning(f"No se pudo calcular salida del flujo: {exc}")
+
+
+# --- RESOLVE EFFECTIVE SOURCES (manual upload overrides OneDrive) ---
+effective_today = today_file or (
+    NamedBytesIO(od_data["today"], od_data["today_name"]) if od_data.get("today") else None
+)
+effective_yesterday = yesterday_file or (
+    NamedBytesIO(od_data["yesterday"], od_data["yesterday_name"]) if od_data.get("yesterday") else None
+)
+
+# Load productivity DataFrames now so they're available for sidebar status + productivity tab
+diseno_df: pd.DataFrame | None = None
+edicion_df: pd.DataFrame | None = None
+try:
+    if diseno_file:
+        diseno_df = load_productivity_file(diseno_file)
+    elif od_data.get("diseno"):
+        diseno_df = load_productivity_file(od_data["diseno"])
+except Exception:
+    diseno_df = None
+try:
+    if edicion_file:
+        edicion_df = load_productivity_file(edicion_file)
+    elif od_data.get("edicion"):
+        edicion_df = load_productivity_file(od_data["edicion"])
+except Exception:
+    edicion_df = None
+
+has_productivity = diseno_df is not None or edicion_df is not None
+
 # --- PROCESSING ---
-if today_file and yesterday_file:
+if effective_today and effective_yesterday:
     try:
         # Load data
         with st.spinner("Loading files..."):
-            today_raw = load_uploaded_file(today_file)
-            yesterday_raw = load_uploaded_file(yesterday_file)
+            today_raw = load_uploaded_file(effective_today)
+            yesterday_raw = load_uploaded_file(effective_yesterday)
 
         # Validate
-        validate_dataframe(today_raw, today_file.name)
-        validate_dataframe(yesterday_raw, yesterday_file.name)
+        validate_dataframe(today_raw, effective_today.name)
+        validate_dataframe(yesterday_raw, effective_yesterday.name)
 
         # Process
         with st.spinner("Processing data..."):
@@ -371,20 +739,69 @@ if today_file and yesterday_file:
         st.header("📋 Detailed Reports")
 
         tab_names = [name for name in sheets.keys() if name != "Catalog Health"]
+        if has_productivity:
+            tab_names.append("👥 Team Productivity")
         tabs = st.tabs(tab_names)
 
         for tab, name in zip(tabs, tab_names):
             with tab:
-                df = sheets[name]
-                if len(df) > 0:
-                    st.dataframe(df, use_container_width=True, hide_index=True)
+                if name == "👥 Team Productivity":
+                    render_productivity_tab(diseno_df, edicion_df)
                 else:
-                    st.info(f"No {name.lower()} found.")
+                    df = sheets[name]
+                    if len(df) > 0:
+                        st.dataframe(df, use_container_width=True, hide_index=True)
+                    else:
+                        st.info(f"No {name.lower()} found.")
+
+        # --- BUILD PRODUCTIVITY SHEETS FOR EXCEL (separate from tab sheets) ---
+        prod_sheets: dict[str, pd.DataFrame] = {}
+        if has_productivity:
+            try:
+                user_frames = []
+                if diseno_df is not None:
+                    uf = diseno_df.groupby("Usuario")["<ID>"].count().reset_index(name="SKU Count")
+                    uf["Team"] = "Diseño"
+                    user_frames.append(uf)
+                if edicion_df is not None:
+                    uf = edicion_df.groupby("Usuario")["<ID>"].count().reset_index(name="SKU Count")
+                    uf["Team"] = "Edición"
+                    user_frames.append(uf)
+                if user_frames:
+                    prod_sheets["SKUs por Usuario"] = pd.concat(user_frames)[["Usuario", "Team", "SKU Count"]].reset_index(drop=True)
+
+                if diseno_df is not None and edicion_df is not None:
+                    _diseno_ids = set(diseno_df["<ID>"])
+                    _edicion_ids = set(edicion_df["<ID>"])
+                    repeated_ids = _diseno_ids & _edicion_ids
+                    prod_sheets["SKUs Repetidos"] = (
+                        diseno_df[diseno_df["<ID>"].isin(repeated_ids)][["<ID>", "<Name>", "Categoría"]]
+                        .drop_duplicates("<ID>")
+                        .reset_index(drop=True)
+                    )
+                    prod_sheets["Solo Diseño"] = diseno_df[~diseno_df["<ID>"].isin(_edicion_ids)].reset_index(drop=True)
+                    prod_sheets["Solo Edición"] = edicion_df[~edicion_df["<ID>"].isin(_diseno_ids)].reset_index(drop=True)
+
+                flujo_col = "Fecha de Salida del Flujo de"
+                flujo_frames_xl = []
+                for _df, _team in [(diseno_df, "Diseño"), (edicion_df, "Edición")]:
+                    if _df is not None:
+                        try:
+                            mask = _df[flujo_col].notna() & (_df[flujo_col].astype(str).str.strip() != "")
+                            fl = _df[mask].copy()
+                            fl["Team"] = _team
+                            flujo_frames_xl.append(fl[["<ID>", "<Name>", "Categoría", "Usuario", flujo_col, "Team"]])
+                        except Exception:
+                            pass
+                if flujo_frames_xl:
+                    prod_sheets["Salieron del Flujo"] = pd.concat(flujo_frames_xl).reset_index(drop=True)
+            except Exception:
+                pass  # Never block the download due to productivity errors
 
         # --- DOWNLOAD BUTTON ---
         st.header("📥 Download Report")
 
-        excel_data = generate_excel_download(sheets)
+        excel_data = generate_excel_download({**sheets, **prod_sheets})
         filename = f"Catalog_Delta_{datetime.now().strftime('%Y%m%d')}.xlsx"
 
         st.download_button(
@@ -401,9 +818,15 @@ if today_file and yesterday_file:
         st.error(f"Error processing files: {e}")
         st.exception(e)
 
+elif has_productivity:
+    # Catalog not loaded yet, but productivity files are — show productivity tab standalone
+    st.info("👆 Upload both catalog files above to generate the delta report.")
+    st.header("👥 Team Productivity")
+    render_productivity_tab(diseno_df, edicion_df)
+
 else:
     # Show instructions when no files uploaded
-    st.info("👆 Upload both files above to generate the report.")
+    st.info("👆 Upload both catalog files above to generate the report.")
 
     with st.expander("📖 Expected File Format"):
         st.markdown("""
