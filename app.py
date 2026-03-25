@@ -4,6 +4,8 @@ Streamlit web interface for the Catalog Delta Report Generator.
 Run with: streamlit run app.py
 """
 
+from __future__ import annotations
+
 import fnmatch
 import io
 from datetime import datetime
@@ -28,6 +30,9 @@ from catalog_delta import (
     compute_deltas,
     filter_sheet,
     validate_dataframe,
+    yesno,
+    nonempty,
+    safe_get,
 )
 
 # Google Sheets configuration
@@ -361,7 +366,203 @@ def load_productivity_file(source) -> pd.DataFrame:
     else:
         df = pd.read_excel(source)
     df.columns = [c.strip() for c in df.columns]
+    if "<ID>" in df.columns:
+        df["<ID>"] = df["<ID>"].astype(str).str.strip()
     return df
+
+
+def render_inventory_tab(
+    today_raw: pd.DataFrame,
+    today_flagged: pd.DataFrame,
+    yesterday_raw: pd.DataFrame | None = None,
+) -> None:
+    """Render the 📦 Inventario Omnicanal tab — 6 QA sections."""
+
+    # ── Shared masks ────────────────────────────────────────────────────────
+    has_stock_m  = yesno(safe_get(today_raw, "TIENE STOCK")) == 1
+    is_visible_m = yesno(safe_get(today_raw, "VISIBLE")) == 1
+
+    # ── KPI Row ─────────────────────────────────────────────────────────────
+    try:
+        total_stock       = int(has_stock_m.sum())
+        stock_no_vis      = int((has_stock_m & ~is_visible_m).sum())
+
+        # SKUs with stock + visible but low content score — requires today_flagged
+        try:
+            merged_score = today_raw[["SKU"]].merge(
+                today_flagged[["SKU", "content_score"]], on="SKU", how="left"
+            )
+            stock_low_score = int(
+                (has_stock_m & is_visible_m & (merged_score["content_score"].fillna(100) < 80)).sum()
+            )
+        except Exception:
+            stock_low_score = 0
+
+        # Total errors = sections 1+2+4+5 (counted below; compute inline)
+        nivel1_lower = safe_get(today_raw, "NIVEL 1").str.strip().str.lower()
+        temp_lower   = safe_get(today_raw, "TEMPORADA ERP").str.strip().str.lower()
+        modal_empty  = ~nonempty(safe_get(today_raw, "MODAL")).astype(bool)
+        no_img_mask  = (
+            ~nonempty(safe_get(today_raw, "TIENE IMAGEN")).astype(bool) |
+            (safe_get(today_raw, "TIENE IMAGEN").str.strip().str.lower() == "no")
+        )
+        disabled_mask = safe_get(today_raw, "HABILITADO/DESHABILITADO").str.lower().str.contains("deshab", na=False)
+
+        n_s1 = int((has_stock_m & ~is_visible_m).sum())
+        n_s2 = int(((nivel1_lower == "catalogo complete") & has_stock_m).sum())
+        n_s4 = int(((temp_lower == "long tail proveedor") & modal_empty).sum())
+        n_s5 = int((no_img_mask & disabled_mask).sum())
+        total_errors = n_s1 + n_s2 + n_s4 + n_s5
+
+        k1, k2, k3, k4 = st.columns(4)
+        k1.metric("📦 SKUs con Stock", total_stock)
+        k2.metric("🚫 Stock sin Visibilidad", stock_no_vis)
+        k3.metric("📉 Stock+Visible, Score<80", stock_low_score)
+        k4.metric("⚠️ Total Errores Detectados", total_errors)
+    except Exception as exc:
+        st.warning(f"No se pudo calcular KPIs: {exc}")
+
+    st.divider()
+
+    # ── Section 1 — Tiene Stock pero NO Visible ──────────────────────────────
+    st.subheader("⚠️ 1. Tiene Stock pero NO Visible")
+    try:
+        s1_cols = ["SKU", "NOMBRE DE PRODUCTO", "NIVEL 1", "TEMPORADA ERP",
+                   "HABILITADO/DESHABILITADO", "TIENE STOCK", "MODAL"]
+        df_s1 = today_raw[has_stock_m & ~is_visible_m][
+            [c for c in s1_cols if c in today_raw.columns]
+        ].reset_index(drop=True)
+
+        m1a, m1b, m1c = st.columns(3)
+        m1a.metric("Total", len(df_s1))
+        if "HABILITADO/DESHABILITADO" in df_s1.columns:
+            dis_cnt = df_s1["HABILITADO/DESHABILITADO"].str.lower().str.contains("deshab", na=False).sum()
+            m1b.metric("Deshabilitados", int(dis_cnt))
+            m1c.metric("Habilitados", len(df_s1) - int(dis_cnt))
+
+        if len(df_s1):
+            st.dataframe(df_s1, use_container_width=True, hide_index=True)
+        else:
+            st.success("No se encontraron SKUs con stock pero sin visibilidad.")
+    except Exception as exc:
+        st.warning(f"Sección 1 no disponible — columna faltante: {exc}")
+
+    st.divider()
+
+    # ── Section 2 — Tipo C con Inventario ────────────────────────────────────
+    st.subheader("🔴 2. Tipo C con Inventario (Revisar)")
+    try:
+        s2_cols = ["SKU", "NOMBRE DE PRODUCTO", "NIVEL 1", "TIENE STOCK",
+                   "VISIBLE", "HABILITADO/DESHABILITADO"]
+        mask_s2 = (nivel1_lower == "catalogo complete") & has_stock_m
+        df_s2 = today_raw[mask_s2][
+            [c for c in s2_cols if c in today_raw.columns]
+        ].reset_index(drop=True)
+
+        if len(df_s2):
+            st.error(f"**{len(df_s2)} SKUs** de tipo 'Catalogo Complete' tienen inventario — deben revisarse.")
+            st.dataframe(df_s2, use_container_width=True, hide_index=True)
+        else:
+            st.success("No se encontraron SKUs Tipo C con inventario.")
+    except Exception as exc:
+        st.warning(f"Sección 2 no disponible — columna faltante: {exc}")
+
+    st.divider()
+
+    # ── Section 3 — Productos No Físicos ─────────────────────────────────────
+    st.subheader("🎁 3. Productos No Físicos (Mesa de Regalo / Certificado de Regalo)")
+    try:
+        s3_cols = ["SKU", "NOMBRE DE PRODUCTO", "NIVEL 1", "TIENE STOCK", "VISIBLE"]
+        mask_s3 = nivel1_lower.str.contains("mesa de regalo|certificado de regalo", na=False)
+        df_s3 = today_raw[mask_s3][
+            [c for c in s3_cols if c in today_raw.columns]
+        ].reset_index(drop=True)
+
+        st.info(f"**{len(df_s3)} productos no físicos** encontrados — excluir de análisis de inventario.")
+        if len(df_s3):
+            st.dataframe(df_s3, use_container_width=True, hide_index=True)
+    except Exception as exc:
+        st.warning(f"Sección 3 no disponible — columna faltante: {exc}")
+
+    st.divider()
+
+    # ── Section 4 — Long Tail Proveedor sin Modal ─────────────────────────────
+    st.subheader("🚚 4. Long Tail Proveedor sin Modal")
+    try:
+        s4_cols = ["SKU", "NOMBRE DE PRODUCTO", "NIVEL 1", "TEMPORADA ERP",
+                   "MODAL", "VISIBLE", "HABILITADO/DESHABILITADO"]
+        mask_s4 = (temp_lower == "long tail proveedor") & modal_empty
+        df_s4 = today_raw[mask_s4][
+            [c for c in s4_cols if c in today_raw.columns]
+        ].reset_index(drop=True)
+
+        if len(df_s4):
+            st.warning(f"**{len(df_s4)} SKUs** Long Tail Proveedor sin modal asignado.")
+        else:
+            st.success("Todos los SKUs Long Tail Proveedor tienen modal.")
+        st.caption("ℹ️ Long Tail Cemaco = proveedor externo almacenado en bodega CEMACO — no requiere modal.")
+        if len(df_s4):
+            st.dataframe(df_s4, use_container_width=True, hide_index=True)
+    except Exception as exc:
+        st.warning(f"Sección 4 no disponible — columna faltante: {exc}")
+
+    st.divider()
+
+    # ── Section 5 — Sin Imagen + Deshabilitado ────────────────────────────────
+    st.subheader("🖼️ 5. Sin Imagen + Deshabilitado (Integración no recibió imagen)")
+    try:
+        s5_cols = ["SKU", "NOMBRE DE PRODUCTO", "NIVEL 1", "TEMPORADA ERP",
+                   "TIENE IMAGEN", "URL IMAGEN", "HABILITADO/DESHABILITADO"]
+        mask_s5 = no_img_mask & disabled_mask
+        df_s5 = today_raw[mask_s5][
+            [c for c in s5_cols if c in today_raw.columns]
+        ].reset_index(drop=True)
+
+        if len(df_s5):
+            st.error(f"**{len(df_s5)} SKUs** deshabilitados porque la integración nunca recibió imagen.")
+            st.dataframe(df_s5, use_container_width=True, hide_index=True)
+        else:
+            st.success("No se encontraron SKUs deshabilitados por falta de imagen.")
+    except Exception as exc:
+        st.warning(f"Sección 5 no disponible — columna faltante: {exc}")
+
+    st.divider()
+
+    # ── Section 6 — URL Imagen no actualizada ────────────────────────────────
+    st.subheader("🔗 6. URL Imagen no actualizada (posible cambio de categoría)")
+    if yesterday_raw is None:
+        st.info("Carga el catálogo de ayer para habilitar esta verificación.")
+    else:
+        try:
+            t_cols = [c for c in ["SKU", "NOMBRE DE PRODUCTO", "NIVEL 1", "URL IMAGEN"] if c in today_raw.columns]
+            y_cols = [c for c in ["SKU", "NIVEL 1", "URL IMAGEN"] if c in yesterday_raw.columns]
+            merged_raw = today_raw[t_cols].merge(
+                yesterday_raw[y_cols].rename(columns={"NIVEL 1": "NIVEL 1_AYER", "URL IMAGEN": "URL IMAGEN_AYER"}),
+                on="SKU",
+                how="inner",
+            )
+            n1_hoy  = merged_raw["NIVEL 1"].str.strip().str.lower() if "NIVEL 1" in merged_raw.columns else pd.Series([""] * len(merged_raw))
+            n1_ayer = merged_raw["NIVEL 1_AYER"].str.strip().str.lower() if "NIVEL 1_AYER" in merged_raw.columns else pd.Series([""] * len(merged_raw))
+            url_hoy  = merged_raw.get("URL IMAGEN",  pd.Series([""] * len(merged_raw)))
+            url_ayer = merged_raw.get("URL IMAGEN_AYER", pd.Series([""] * len(merged_raw)))
+
+            mask_s6 = (
+                (n1_ayer == "catalogo complete") &
+                (n1_hoy  != "catalogo complete") &
+                (url_hoy == url_ayer)
+            )
+            s6_cols = ["SKU", "NOMBRE DE PRODUCTO", "NIVEL 1", "NIVEL 1_AYER", "URL IMAGEN", "URL IMAGEN_AYER"]
+            df_s6 = merged_raw[mask_s6][
+                [c for c in s6_cols if c in merged_raw.columns]
+            ].reset_index(drop=True)
+
+            if len(df_s6):
+                st.warning(f"**{len(df_s6)} SKUs** cambiaron de categoría pero mantienen la misma URL de imagen.")
+                st.dataframe(df_s6, use_container_width=True, hide_index=True)
+            else:
+                st.success("No se encontraron SKUs con URL de imagen desactualizada.")
+        except Exception as exc:
+            st.warning(f"Sección 6 no disponible — columna faltante: {exc}")
 
 
 def render_productivity_tab(diseno_df: pd.DataFrame | None, edicion_df: pd.DataFrame | None) -> None:
@@ -374,42 +575,35 @@ def render_productivity_tab(diseno_df: pd.DataFrame | None, edicion_df: pd.DataF
     # ── A. SKUs por Usuario ──────────────────────────────────────────────────
     st.subheader("A. SKUs por Usuario")
     try:
-        col_a1, col_a2 = st.columns(2)
-        d_by_user = None
-        e_by_user = None
-
+        frames = []
         if diseno_df is not None:
-            d_by_user = (
-                diseno_df.groupby("Usuario")["<ID>"]
-                .count()
-                .reset_index(name="SKU Count")
-                .sort_values("SKU Count", ascending=False)
-            )
-            with col_a1:
-                st.caption("Diseño")
-                st.dataframe(d_by_user, hide_index=True, use_container_width=True)
-
+            frames.append(diseno_df[["Usuario", "<ID>"]].copy())
+            if "Usuario Promueve desde Catalogo" in diseno_df.columns:
+                frames.append(
+                    diseno_df[["Usuario Promueve desde Catalogo", "<ID>"]]
+                    .rename(columns={"Usuario Promueve desde Catalogo": "Usuario"})
+                    .dropna(subset=["Usuario"])
+                )
         if edicion_df is not None:
-            e_by_user = (
-                edicion_df.groupby("Usuario")["<ID>"]
-                .count()
-                .reset_index(name="SKU Count")
-                .sort_values("SKU Count", ascending=False)
-            )
-            with col_a2:
-                st.caption("Edición")
-                st.dataframe(e_by_user, hide_index=True, use_container_width=True)
+            frames.append(edicion_df[["Usuario", "<ID>"]].copy())
+            if "Usuario Promueve desde Compras" in edicion_df.columns:
+                frames.append(
+                    edicion_df[["Usuario Promueve desde Compras", "<ID>"]]
+                    .rename(columns={"Usuario Promueve desde Compras": "Usuario"})
+                    .dropna(subset=["Usuario"])
+                )
 
-        if d_by_user is not None and e_by_user is not None:
-            chart_df = pd.concat([
-                d_by_user.assign(Team="Diseño"),
-                e_by_user.assign(Team="Edición"),
-            ])
-            st.bar_chart(chart_df, x="Usuario", y="SKU Count", color="Team")
-        elif d_by_user is not None:
-            st.bar_chart(d_by_user.set_index("Usuario")["SKU Count"])
-        elif e_by_user is not None:
-            st.bar_chart(e_by_user.set_index("Usuario")["SKU Count"])
+        if frames:
+            combined = pd.concat(frames).drop_duplicates(["Usuario", "<ID>"])
+            by_user = (
+                combined.groupby("Usuario")["<ID>"]
+                .count()
+                .reset_index(name="SKUs Únicos")
+                .sort_values("SKUs Únicos", ascending=False)
+            )
+            st.metric("Total SKUs únicos trabajados", int(combined["<ID>"].nunique()))
+            st.dataframe(by_user, hide_index=True, use_container_width=True)
+            st.bar_chart(by_user.set_index("Usuario")["SKUs Únicos"])
     except Exception as exc:
         st.warning(f"No se pudo calcular SKUs por Usuario: {exc}")
 
@@ -510,24 +704,32 @@ def render_productivity_tab(diseno_df: pd.DataFrame | None, edicion_df: pd.DataF
     # ── F. SKUs que Salieron del Flujo ──────────────────────────────────────
     st.subheader("F. SKUs que Salieron del Flujo")
     try:
-        flujo_col = "Fecha de Salida del Flujo de"
+        from datetime import timedelta
+        yesterday_date = (datetime.now() - timedelta(days=1)).date()
+        flujo_col = "Fecha de Salida del Flujo de trabajo"
         flujo_frames = []
         for df, team in [(diseno_df, "Diseño"), (edicion_df, "Edición")]:
             if df is not None:
-                mask = df[flujo_col].notna() & (df[flujo_col].astype(str).str.strip() != "")
+                parsed = pd.to_datetime(df[flujo_col], errors="coerce").dt.date
+                mask = parsed == yesterday_date
                 flujo = df[mask].copy()
                 flujo["Team"] = team
-                flujo_frames.append(flujo[["<ID>", "<Name>", "Categoría", "Usuario", flujo_col, "Team"]])
+                cols = ["<ID>", "<Name>", "Categoría", "Usuario", flujo_col, "Total Omnicanal", "Team"]
+                flujo_frames.append(flujo[[c for c in cols if c in flujo.columns]])
         if flujo_frames:
             flujo_all = (
                 pd.concat(flujo_frames)
                 .sort_values(flujo_col, ascending=False)
                 .reset_index(drop=True)
             )
-            st.metric("SKUs que salieron del flujo", len(flujo_all))
+            con_inv = int((pd.to_numeric(flujo_all.get("Total Omnicanal", pd.Series([])), errors="coerce") > 0).sum())
+            st.caption(f"Fecha filtrada: {yesterday_date}")
+            col_f1, col_f2 = st.columns(2)
+            col_f1.metric("SKUs que salieron del flujo ayer", len(flujo_all))
+            col_f2.metric("Con inventario omnicanal", con_inv)
             st.dataframe(flujo_all, hide_index=True, use_container_width=True)
         else:
-            st.info("Ningún SKU ha salido del flujo.")
+            st.info(f"Ningún SKU salió del flujo el {yesterday_date}.")
     except Exception as exc:
         st.warning(f"No se pudo calcular salida del flujo: {exc}")
 
@@ -739,13 +941,16 @@ if effective_today and effective_yesterday:
         st.header("📋 Detailed Reports")
 
         tab_names = [name for name in sheets.keys() if name != "Catalog Health"]
+        tab_names.append("📦 Inventario Omnicanal")
         if has_productivity:
             tab_names.append("👥 Team Productivity")
         tabs = st.tabs(tab_names)
 
         for tab, name in zip(tabs, tab_names):
             with tab:
-                if name == "👥 Team Productivity":
+                if name == "📦 Inventario Omnicanal":
+                    render_inventory_tab(today_raw, today, yesterday_raw)
+                elif name == "👥 Team Productivity":
                     render_productivity_tab(diseno_df, edicion_df)
                 else:
                     df = sheets[name]
@@ -758,17 +963,32 @@ if effective_today and effective_yesterday:
         prod_sheets: dict[str, pd.DataFrame] = {}
         if has_productivity:
             try:
-                user_frames = []
+                xl_user_frames = []
                 if diseno_df is not None:
-                    uf = diseno_df.groupby("Usuario")["<ID>"].count().reset_index(name="SKU Count")
-                    uf["Team"] = "Diseño"
-                    user_frames.append(uf)
+                    xl_user_frames.append(diseno_df[["Usuario", "<ID>"]].copy())
+                    if "Usuario Promueve desde Catalogo" in diseno_df.columns:
+                        xl_user_frames.append(
+                            diseno_df[["Usuario Promueve desde Catalogo", "<ID>"]]
+                            .rename(columns={"Usuario Promueve desde Catalogo": "Usuario"})
+                            .dropna(subset=["Usuario"])
+                        )
                 if edicion_df is not None:
-                    uf = edicion_df.groupby("Usuario")["<ID>"].count().reset_index(name="SKU Count")
-                    uf["Team"] = "Edición"
-                    user_frames.append(uf)
-                if user_frames:
-                    prod_sheets["SKUs por Usuario"] = pd.concat(user_frames)[["Usuario", "Team", "SKU Count"]].reset_index(drop=True)
+                    xl_user_frames.append(edicion_df[["Usuario", "<ID>"]].copy())
+                    if "Usuario Promueve desde Compras" in edicion_df.columns:
+                        xl_user_frames.append(
+                            edicion_df[["Usuario Promueve desde Compras", "<ID>"]]
+                            .rename(columns={"Usuario Promueve desde Compras": "Usuario"})
+                            .dropna(subset=["Usuario"])
+                        )
+                if xl_user_frames:
+                    xl_combined = pd.concat(xl_user_frames).drop_duplicates(["Usuario", "<ID>"])
+                    uf = (
+                        xl_combined.groupby("Usuario")["<ID>"]
+                        .count()
+                        .reset_index(name="SKUs Únicos")
+                        .sort_values("SKUs Únicos", ascending=False)
+                    )
+                    prod_sheets["SKUs por Usuario"] = uf.reset_index(drop=True)
 
                 if diseno_df is not None and edicion_df is not None:
                     _diseno_ids = set(diseno_df["<ID>"])
@@ -782,7 +1002,7 @@ if effective_today and effective_yesterday:
                     prod_sheets["Solo Diseño"] = diseno_df[~diseno_df["<ID>"].isin(_edicion_ids)].reset_index(drop=True)
                     prod_sheets["Solo Edición"] = edicion_df[~edicion_df["<ID>"].isin(_diseno_ids)].reset_index(drop=True)
 
-                flujo_col = "Fecha de Salida del Flujo de"
+                flujo_col = "Fecha de Salida del Flujo de trabajo"
                 flujo_frames_xl = []
                 for _df, _team in [(diseno_df, "Diseño"), (edicion_df, "Edición")]:
                     if _df is not None:
@@ -798,10 +1018,49 @@ if effective_today and effective_yesterday:
             except Exception:
                 pass  # Never block the download due to productivity errors
 
+        # --- INVENTORY SHEETS FOR EXCEL ─────────────────────────────────────
+        inv_sheets: dict[str, pd.DataFrame] = {}
+        try:
+            _has_stock   = yesno(safe_get(today_raw, "TIENE STOCK")) == 1
+            _is_visible  = yesno(safe_get(today_raw, "VISIBLE")) == 1
+            _nivel1      = safe_get(today_raw, "NIVEL 1").str.strip().str.lower()
+            _temp        = safe_get(today_raw, "TEMPORADA ERP").str.strip().str.lower()
+            _modal_empty = ~nonempty(safe_get(today_raw, "MODAL")).astype(bool)
+            _no_img      = (
+                ~nonempty(safe_get(today_raw, "TIENE IMAGEN")).astype(bool) |
+                (safe_get(today_raw, "TIENE IMAGEN").str.strip().str.lower() == "no")
+            )
+            _disabled    = safe_get(today_raw, "HABILITADO/DESHABILITADO").str.lower().str.contains("deshab", na=False)
+
+            inv_sheets["Stock No Visible"] = today_raw[_has_stock & ~_is_visible].reset_index(drop=True)
+            inv_sheets["Tipo C con Stock"]  = today_raw[(_nivel1 == "catalogo complete") & _has_stock].reset_index(drop=True)
+            inv_sheets["No Fisicos"]        = today_raw[_nivel1.str.contains("mesa de regalo|certificado de regalo", na=False)].reset_index(drop=True)
+            inv_sheets["Long Tail Sin Modal"] = today_raw[(_temp == "long tail proveedor") & _modal_empty].reset_index(drop=True)
+            inv_sheets["Sin Imagen Deshabilitado"] = today_raw[_no_img & _disabled].reset_index(drop=True)
+
+            if yesterday_raw is not None:
+                try:
+                    t_xl = [c for c in ["SKU", "NOMBRE DE PRODUCTO", "NIVEL 1", "URL IMAGEN"] if c in today_raw.columns]
+                    y_xl = [c for c in ["SKU", "NIVEL 1", "URL IMAGEN"] if c in yesterday_raw.columns]
+                    _merged_xl = today_raw[t_xl].merge(
+                        yesterday_raw[y_xl].rename(columns={"NIVEL 1": "NIVEL 1_AYER", "URL IMAGEN": "URL IMAGEN_AYER"}),
+                        on="SKU", how="inner",
+                    )
+                    _n1h = _merged_xl["NIVEL 1"].str.strip().str.lower() if "NIVEL 1" in _merged_xl.columns else pd.Series([""] * len(_merged_xl))
+                    _n1a = _merged_xl["NIVEL 1_AYER"].str.strip().str.lower() if "NIVEL 1_AYER" in _merged_xl.columns else pd.Series([""] * len(_merged_xl))
+                    _url_h = _merged_xl.get("URL IMAGEN",     pd.Series([""] * len(_merged_xl)))
+                    _url_a = _merged_xl.get("URL IMAGEN_AYER", pd.Series([""] * len(_merged_xl)))
+                    _m6 = (_n1a == "catalogo complete") & (_n1h != "catalogo complete") & (_url_h == _url_a)
+                    inv_sheets["URL No Actualizada"] = _merged_xl[_m6].reset_index(drop=True)
+                except Exception:
+                    pass
+        except Exception:
+            pass  # Never block the download due to inventory sheet errors
+
         # --- DOWNLOAD BUTTON ---
         st.header("📥 Download Report")
 
-        excel_data = generate_excel_download({**sheets, **prod_sheets})
+        excel_data = generate_excel_download({**sheets, **prod_sheets, **inv_sheets})
         filename = f"Catalog_Delta_{datetime.now().strftime('%Y%m%d')}.xlsx"
 
         st.download_button(
