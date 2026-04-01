@@ -343,6 +343,8 @@ def load_uploaded_file(uploaded_file) -> pd.DataFrame:
         df = pd.read_csv(uploaded_file)
 
     df.columns = [c.strip().upper() for c in df.columns]
+    if "SKU" in df.columns:
+        df["SKU"] = df["SKU"].astype(str).str.strip()
     return df
 
 
@@ -379,46 +381,49 @@ def render_inventory_tab(
     """Render the 📦 Inventario Omnicanal tab — 6 QA sections."""
 
     # ── Shared masks ────────────────────────────────────────────────────────
-    has_stock_m  = yesno(safe_get(today_raw, "TIENE STOCK")) == 1
-    is_visible_m = yesno(safe_get(today_raw, "VISIBLE")) == 1
+    has_stock_m   = yesno(safe_get(today_raw, "TIENE STOCK")) == 1
+    is_visible_m  = yesno(safe_get(today_raw, "VISIBLE")) == 1
+    nivel1_lower  = safe_get(today_raw, "NIVEL 1").str.strip().str.lower()
+    temp_lower    = safe_get(today_raw, "TEMPORADA ERP").str.strip().str.lower()
+    modal_empty   = ~nonempty(safe_get(today_raw, "MODAL")).astype(bool)
+    no_img_mask   = (
+        ~nonempty(safe_get(today_raw, "TIENE IMAGEN")).astype(bool) |
+        (safe_get(today_raw, "TIENE IMAGEN").str.strip().str.lower() == "no")
+    )
+    disabled_mask = safe_get(today_raw, "HABILITADO/DESHABILITADO").str.lower().str.contains("deshab", na=False)
+
+    # No Físicos mask — excluded from all actionable sections
+    no_fisicos_mask = nivel1_lower.str.contains("mesa de regalos|certificado de regalo", na=False)
+    is_physical     = ~no_fisicos_mask
 
     # ── KPI Row ─────────────────────────────────────────────────────────────
     try:
-        total_stock       = int(has_stock_m.sum())
-        stock_no_vis      = int((has_stock_m & ~is_visible_m).sum())
+        # All KPIs exclude No Físicos
+        is_tipo_c_kpi = nivel1_lower == "catalogo completo"
+        stock_no_vis = int((has_stock_m & ~is_visible_m & is_physical & ~is_tipo_c_kpi & ~disabled_mask).sum())
 
-        # SKUs with stock + visible but low content score — requires today_flagged
         try:
             merged_score = today_raw[["SKU"]].merge(
                 today_flagged[["SKU", "content_score"]], on="SKU", how="left"
             )
             stock_low_score = int(
-                (has_stock_m & is_visible_m & (merged_score["content_score"].fillna(100) < 80)).sum()
+                (has_stock_m & is_visible_m & is_physical & (merged_score["content_score"].fillna(100) < 80)).sum()
             )
         except Exception:
             stock_low_score = 0
 
-        # Total errors = sections 1+2+4+5 (counted below; compute inline)
-        nivel1_lower = safe_get(today_raw, "NIVEL 1").str.strip().str.lower()
-        temp_lower   = safe_get(today_raw, "TEMPORADA ERP").str.strip().str.lower()
-        modal_empty  = ~nonempty(safe_get(today_raw, "MODAL")).astype(bool)
-        no_img_mask  = (
-            ~nonempty(safe_get(today_raw, "TIENE IMAGEN")).astype(bool) |
-            (safe_get(today_raw, "TIENE IMAGEN").str.strip().str.lower() == "no")
-        )
-        disabled_mask = safe_get(today_raw, "HABILITADO/DESHABILITADO").str.lower().str.contains("deshab", na=False)
+        disabled_with_stock = int((disabled_mask & has_stock_m & is_physical).sum())
+        tipo_c_stock        = int(((nivel1_lower == "catalogo completo") & has_stock_m & is_physical).sum())
+        long_tail_sin_modal = int(((temp_lower == "long tail proveedor") & modal_empty & is_physical).sum())
+        acciones_urgentes   = stock_no_vis + disabled_with_stock + tipo_c_stock + long_tail_sin_modal
 
-        n_s1 = int((has_stock_m & ~is_visible_m).sum())
-        n_s2 = int(((nivel1_lower == "catalogo complete") & has_stock_m).sum())
-        n_s4 = int(((temp_lower == "long tail proveedor") & modal_empty).sum())
-        n_s5 = int((no_img_mask & disabled_mask).sum())
-        total_errors = n_s1 + n_s2 + n_s4 + n_s5
-
-        k1, k2, k3, k4 = st.columns(4)
-        k1.metric("📦 SKUs con Stock", total_stock)
-        k2.metric("🚫 Stock sin Visibilidad", stock_no_vis)
-        k3.metric("📉 Stock+Visible, Score<80", stock_low_score)
-        k4.metric("⚠️ Total Errores Detectados", total_errors)
+        k1, k2, k3, k4, k5 = st.columns(5)
+        k1.metric("🚫 Stock sin Visibilidad",     stock_no_vis)
+        k2.metric("📉 Stock+Visible, Score<80",   stock_low_score)
+        k3.metric("⛔ Deshabilitados con Stock",  disabled_with_stock)
+        k4.metric("🔴 Tipo C con Inventario",     tipo_c_stock)
+        k5.metric("🚚 Long Tail sin Modal",       long_tail_sin_modal)
+        st.caption(f"⚠️ **Acciones urgentes totales:** {acciones_urgentes:,}  ·  Productos no físicos excluidos: {int(no_fisicos_mask.sum()):,}")
     except Exception as exc:
         st.warning(f"No se pudo calcular KPIs: {exc}")
 
@@ -426,19 +431,15 @@ def render_inventory_tab(
 
     # ── Section 1 — Tiene Stock pero NO Visible ──────────────────────────────
     st.subheader("⚠️ 1. Tiene Stock pero NO Visible")
+    st.caption("Excluye: Tipo C (ver §2), Deshabilitados (ver §5), No Físicos (ver §3).")
     try:
         s1_cols = ["SKU", "NOMBRE DE PRODUCTO", "NIVEL 1", "TEMPORADA ERP",
                    "HABILITADO/DESHABILITADO", "TIENE STOCK", "MODAL"]
-        df_s1 = today_raw[has_stock_m & ~is_visible_m][
+        is_tipo_c = nivel1_lower == "catalogo completo"
+        mask_s1 = has_stock_m & ~is_visible_m & is_physical & ~is_tipo_c & ~disabled_mask
+        df_s1 = today_raw[mask_s1][
             [c for c in s1_cols if c in today_raw.columns]
         ].reset_index(drop=True)
-
-        m1a, m1b, m1c = st.columns(3)
-        m1a.metric("Total", len(df_s1))
-        if "HABILITADO/DESHABILITADO" in df_s1.columns:
-            dis_cnt = df_s1["HABILITADO/DESHABILITADO"].str.lower().str.contains("deshab", na=False).sum()
-            m1b.metric("Deshabilitados", int(dis_cnt))
-            m1c.metric("Habilitados", len(df_s1) - int(dis_cnt))
 
         if len(df_s1):
             st.dataframe(df_s1, use_container_width=True, hide_index=True)
@@ -450,20 +451,59 @@ def render_inventory_tab(
     st.divider()
 
     # ── Section 2 — Tipo C con Inventario ────────────────────────────────────
-    st.subheader("🔴 2. Tipo C con Inventario (Revisar)")
+    st.subheader("🔴 2. Tipo C con Inventario")
+    st.caption("Productos sin foto/contenido completo — disponibles en tienda pero no en línea. NIVEL 1 = 'Catalogo Complete'.")
     try:
-        s2_cols = ["SKU", "NOMBRE DE PRODUCTO", "NIVEL 1", "TIENE STOCK",
-                   "VISIBLE", "HABILITADO/DESHABILITADO"]
-        mask_s2 = (nivel1_lower == "catalogo complete") & has_stock_m
-        df_s2 = today_raw[mask_s2][
+        s2_cols = ["SKU", "NOMBRE DE PRODUCTO", "NIVEL 1", "TIENE STOCK", "VISIBLE", "HABILITADO/DESHABILITADO"]
+
+        # ── Pendientes: siguen siendo Tipo C hoy ────────────────────────────
+        mask_pendientes = (nivel1_lower == "catalogo completo") & has_stock_m & is_physical
+        df_pendientes = today_raw[mask_pendientes][
             [c for c in s2_cols if c in today_raw.columns]
         ].reset_index(drop=True)
 
-        if len(df_s2):
-            st.error(f"**{len(df_s2)} SKUs** de tipo 'Catalogo Complete' tienen inventario — deben revisarse.")
-            st.dataframe(df_s2, use_container_width=True, hide_index=True)
+        # ── Graduados: eran Tipo C ayer, hoy ya tienen categoría real ───────
+        df_graduados = None
+        df_graduados_visibles = None
+        if yesterday_raw is not None:
+            try:
+                ayer_nivel1 = safe_get(yesterday_raw, "NIVEL 1").str.strip().str.lower()
+                mask_era_tipo_c = ayer_nivel1 == "catalogo completo"
+                skus_era_tipo_c = set(yesterday_raw[mask_era_tipo_c]["SKU"])
+
+                grad_cols = ["SKU", "NOMBRE DE PRODUCTO", "NIVEL 1", "VISIBLE", "TIENE STOCK"]
+                hoy_tipo_c_skus = set(today_raw[nivel1_lower == "catalogo completo"]["SKU"])
+                graduated_skus = skus_era_tipo_c - hoy_tipo_c_skus
+
+                df_graduados = today_raw[today_raw["SKU"].isin(graduated_skus)][
+                    [c for c in grad_cols if c in today_raw.columns]
+                ].reset_index(drop=True)
+
+                df_graduados_visibles = df_graduados[
+                    yesno(safe_get(df_graduados, "VISIBLE")) == 1
+                ].reset_index(drop=True) if len(df_graduados) else df_graduados
+            except Exception:
+                pass
+
+        # ── Display ─────────────────────────────────────────────────────────
+        if df_graduados is not None:
+            g1, g2, g3 = st.columns(3)
+            g1.metric("📋 Pendientes (Tipo C con Stock)", len(df_pendientes))
+            g2.metric("🎓 Graduados hoy", len(df_graduados), delta=f"+{len(df_graduados)}" if len(df_graduados) else None)
+            g3.metric("✅ Graduados + Ya Visibles", len(df_graduados_visibles) if df_graduados_visibles is not None else 0)
         else:
-            st.success("No se encontraron SKUs Tipo C con inventario.")
+            st.metric("📋 Pendientes (Tipo C con Stock)", len(df_pendientes))
+            st.caption("Carga el catálogo de ayer para ver graduados del día.")
+
+        if len(df_pendientes):
+            st.markdown("**Pendientes:**")
+            st.dataframe(df_pendientes, use_container_width=True, hide_index=True)
+        else:
+            st.success("No hay SKUs Tipo C con inventario pendientes.")
+
+        if df_graduados is not None and len(df_graduados):
+            st.markdown("**Graduados hoy** (eran Tipo C ayer, hoy tienen categoría):")
+            st.dataframe(df_graduados, use_container_width=True, hide_index=True)
     except Exception as exc:
         st.warning(f"Sección 2 no disponible — columna faltante: {exc}")
 
@@ -473,7 +513,7 @@ def render_inventory_tab(
     st.subheader("🎁 3. Productos No Físicos (Mesa de Regalo / Certificado de Regalo)")
     try:
         s3_cols = ["SKU", "NOMBRE DE PRODUCTO", "NIVEL 1", "TIENE STOCK", "VISIBLE"]
-        mask_s3 = nivel1_lower.str.contains("mesa de regalo|certificado de regalo", na=False)
+        mask_s3 = nivel1_lower.str.contains("mesa de regalos|certificado de regalo", na=False)
         df_s3 = today_raw[mask_s3][
             [c for c in s3_cols if c in today_raw.columns]
         ].reset_index(drop=True)
@@ -491,7 +531,7 @@ def render_inventory_tab(
     try:
         s4_cols = ["SKU", "NOMBRE DE PRODUCTO", "NIVEL 1", "TEMPORADA ERP",
                    "MODAL", "VISIBLE", "HABILITADO/DESHABILITADO"]
-        mask_s4 = (temp_lower == "long tail proveedor") & modal_empty
+        mask_s4 = (temp_lower == "long tail proveedor") & modal_empty & is_physical
         df_s4 = today_raw[mask_s4][
             [c for c in s4_cols if c in today_raw.columns]
         ].reset_index(drop=True)
@@ -508,12 +548,32 @@ def render_inventory_tab(
 
     st.divider()
 
-    # ── Section 5 — Sin Imagen + Deshabilitado ────────────────────────────────
-    st.subheader("🖼️ 5. Sin Imagen + Deshabilitado (Integración no recibió imagen)")
+    # ── Section 5a — Deshabilitados con Inventario ───────────────────────────
+    st.subheader("⛔ 5. Deshabilitados con Inventario")
+    try:
+        s5a_cols = ["SKU", "NOMBRE DE PRODUCTO", "NIVEL 1", "TEMPORADA ERP",
+                    "HABILITADO/DESHABILITADO", "TIENE STOCK", "VISIBLE"]
+        mask_s5a = disabled_mask & has_stock_m & is_physical
+        df_s5a = today_raw[mask_s5a][
+            [c for c in s5a_cols if c in today_raw.columns]
+        ].reset_index(drop=True)
+
+        if len(df_s5a):
+            st.error(f"**{len(df_s5a)} SKUs** deshabilitados pero con inventario — hay ventas bloqueadas.")
+            st.dataframe(df_s5a, use_container_width=True, hide_index=True)
+        else:
+            st.success("No se encontraron SKUs deshabilitados con inventario.")
+    except Exception as exc:
+        st.warning(f"Sección 5 no disponible — columna faltante: {exc}")
+
+    st.divider()
+
+    # ── Section 6 — Sin Imagen + Deshabilitado ────────────────────────────────
+    st.subheader("🖼️ 6. Sin Imagen + Deshabilitado (Integración no recibió imagen)")
     try:
         s5_cols = ["SKU", "NOMBRE DE PRODUCTO", "NIVEL 1", "TEMPORADA ERP",
                    "TIENE IMAGEN", "URL IMAGEN", "HABILITADO/DESHABILITADO"]
-        mask_s5 = no_img_mask & disabled_mask
+        mask_s5 = no_img_mask & disabled_mask & is_physical
         df_s5 = today_raw[mask_s5][
             [c for c in s5_cols if c in today_raw.columns]
         ].reset_index(drop=True)
@@ -524,12 +584,12 @@ def render_inventory_tab(
         else:
             st.success("No se encontraron SKUs deshabilitados por falta de imagen.")
     except Exception as exc:
-        st.warning(f"Sección 5 no disponible — columna faltante: {exc}")
+        st.warning(f"Sección 6 no disponible — columna faltante: {exc}")
 
     st.divider()
 
-    # ── Section 6 — URL Imagen no actualizada ────────────────────────────────
-    st.subheader("🔗 6. URL Imagen no actualizada (posible cambio de categoría)")
+    # ── Section 7 — URL Imagen no actualizada ──────────────────────────────── ────────────────────────────────
+    st.subheader("🔗 7. URL Imagen no actualizada (posible cambio de categoría)")
     if yesterday_raw is None:
         st.info("Carga el catálogo de ayer para habilitar esta verificación.")
     else:
@@ -547,8 +607,8 @@ def render_inventory_tab(
             url_ayer = merged_raw.get("URL IMAGEN_AYER", pd.Series([""] * len(merged_raw)))
 
             mask_s6 = (
-                (n1_ayer == "catalogo complete") &
-                (n1_hoy  != "catalogo complete") &
+                (n1_ayer == "catalogo completo") &
+                (n1_hoy  != "catalogo completo") &
                 (url_hoy == url_ayer)
             )
             s6_cols = ["SKU", "NOMBRE DE PRODUCTO", "NIVEL 1", "NIVEL 1_AYER", "URL IMAGEN", "URL IMAGEN_AYER"]
@@ -1033,8 +1093,8 @@ if effective_today and effective_yesterday:
             _disabled    = safe_get(today_raw, "HABILITADO/DESHABILITADO").str.lower().str.contains("deshab", na=False)
 
             inv_sheets["Stock No Visible"] = today_raw[_has_stock & ~_is_visible].reset_index(drop=True)
-            inv_sheets["Tipo C con Stock"]  = today_raw[(_nivel1 == "catalogo complete") & _has_stock].reset_index(drop=True)
-            inv_sheets["No Fisicos"]        = today_raw[_nivel1.str.contains("mesa de regalo|certificado de regalo", na=False)].reset_index(drop=True)
+            inv_sheets["Tipo C con Stock"]  = today_raw[(_nivel1 == "catalogo completo") & _has_stock].reset_index(drop=True)
+            inv_sheets["No Fisicos"]        = today_raw[_nivel1.str.contains("mesa de regalos|certificado de regalo", na=False)].reset_index(drop=True)
             inv_sheets["Long Tail Sin Modal"] = today_raw[(_temp == "long tail proveedor") & _modal_empty].reset_index(drop=True)
             inv_sheets["Sin Imagen Deshabilitado"] = today_raw[_no_img & _disabled].reset_index(drop=True)
 
@@ -1050,7 +1110,7 @@ if effective_today and effective_yesterday:
                     _n1a = _merged_xl["NIVEL 1_AYER"].str.strip().str.lower() if "NIVEL 1_AYER" in _merged_xl.columns else pd.Series([""] * len(_merged_xl))
                     _url_h = _merged_xl.get("URL IMAGEN",     pd.Series([""] * len(_merged_xl)))
                     _url_a = _merged_xl.get("URL IMAGEN_AYER", pd.Series([""] * len(_merged_xl)))
-                    _m6 = (_n1a == "catalogo complete") & (_n1h != "catalogo complete") & (_url_h == _url_a)
+                    _m6 = (_n1a == "catalogo completo") & (_n1h != "catalogo completo") & (_url_h == _url_a)
                     inv_sheets["URL No Actualizada"] = _merged_xl[_m6].reset_index(drop=True)
                 except Exception:
                     pass
