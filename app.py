@@ -625,7 +625,7 @@ def render_inventory_tab(
             st.warning(f"Sección 6 no disponible — columna faltante: {exc}")
 
 
-def render_productivity_tab(diseno_df: pd.DataFrame | None, edicion_df: pd.DataFrame | None) -> None:
+def render_productivity_tab(diseno_df: pd.DataFrame | None, edicion_df: pd.DataFrame | None, today_raw: pd.DataFrame | None = None) -> None:
     """Render the 👥 Team Productivity tab content (sections A–F)."""
 
     both = diseno_df is not None and edicion_df is not None
@@ -765,8 +765,21 @@ def render_productivity_tab(diseno_df: pd.DataFrame | None, edicion_df: pd.DataF
     st.subheader("F. SKUs que Salieron del Flujo")
     try:
         from datetime import timedelta
-        yesterday_date = (datetime.now() - timedelta(days=1)).date()
         flujo_col = "Fecha de Salida del Flujo de trabajo"
+
+        # Detect most recent flujo date across both files as default
+        all_dates = []
+        for df in [diseno_df, edicion_df]:
+            if df is not None and flujo_col in df.columns:
+                all_dates += pd.to_datetime(df[flujo_col], errors="coerce").dropna().dt.date.tolist()
+        default_date = max(all_dates) if all_dates else (datetime.now() - timedelta(days=1)).date()
+
+        yesterday_date = st.date_input(
+            "Fecha a filtrar",
+            value=default_date,
+            help="Por defecto usa la fecha más reciente en los archivos. Ajusta para auditar otro día.",
+            key="flujo_date",
+        )
         flujo_frames = []
         for df, team in [(diseno_df, "Diseño"), (edicion_df, "Edición")]:
             if df is not None:
@@ -779,14 +792,32 @@ def render_productivity_tab(diseno_df: pd.DataFrame | None, edicion_df: pd.DataF
         if flujo_frames:
             flujo_all = (
                 pd.concat(flujo_frames)
+                .drop_duplicates("<ID>")
                 .sort_values(flujo_col, ascending=False)
                 .reset_index(drop=True)
             )
-            con_inv = int((pd.to_numeric(flujo_all.get("Total Omnicanal", pd.Series([])), errors="coerce") > 0).sum())
+
+            # Join visibility from catalog if available
+            if today_raw is not None and "SKU" in today_raw.columns and "VISIBLE" in today_raw.columns:
+                vis_map = today_raw[["SKU", "VISIBLE"]].copy()
+                vis_map["SKU"] = vis_map["SKU"].astype(str).str.strip()
+                flujo_all["<ID>"] = flujo_all["<ID>"].astype(str).str.strip()
+                flujo_all = flujo_all.merge(vis_map, left_on="<ID>", right_on="SKU", how="left").drop(columns=["SKU"])
+
+            omni_num = pd.to_numeric(flujo_all.get("Total Omnicanal", pd.Series([])), errors="coerce")
+            con_inv_mask = omni_num > 0
+            con_inv = int(con_inv_mask.sum())
+            con_inv_visible = int(
+                (con_inv_mask & (flujo_all.get("VISIBLE", pd.Series([])).astype(str).str.lower().str.strip() == "si")).sum()
+            ) if "VISIBLE" in flujo_all.columns else 0
+            con_inv_no_visible = con_inv - con_inv_visible
+
             st.caption(f"Fecha filtrada: {yesterday_date}")
-            col_f1, col_f2 = st.columns(2)
-            col_f1.metric("SKUs que salieron del flujo ayer", len(flujo_all))
-            col_f2.metric("Con inventario omnicanal", con_inv)
+            cf1, cf2, cf3, cf4 = st.columns(4)
+            cf1.metric("SKUs únicos salieron del flujo", len(flujo_all))
+            cf2.metric("Con inventario omnicanal", con_inv)
+            cf3.metric("✅ Con inv. + Visibles", con_inv_visible)
+            cf4.metric("⚠️ Con inv. + No Visibles", con_inv_no_visible)
             st.dataframe(flujo_all, hide_index=True, use_container_width=True)
         else:
             st.info(f"Ningún SKU salió del flujo el {yesterday_date}.")
@@ -1011,7 +1042,7 @@ if effective_today and effective_yesterday:
                 if name == "📦 Inventario Omnicanal":
                     render_inventory_tab(today_raw, today, yesterday_raw)
                 elif name == "👥 Team Productivity":
-                    render_productivity_tab(diseno_df, edicion_df)
+                    render_productivity_tab(diseno_df, edicion_df, today_raw)
                 else:
                     df = sheets[name]
                     if len(df) > 0:
