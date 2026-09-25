@@ -47,7 +47,12 @@ def main(argv: list[str] | None = None) -> int:
         from .history_sheet import SheetHistory
         history = SheetHistory(settings.google_sheet_id, settings.google_service_account)
 
-    job = Job(settings, make_storage(settings), history)
+    try:
+        storage = make_storage(settings)
+    except ValueError as exc:
+        logging.error("%s. Set them in this terminal (see docs/PIPELINE.md) or pass --local ROOT.", exc)
+        return 2
+    job = Job(settings, storage, history)
     if args.recompute:
         index = job.store.load_index()
         if args.recompute not in index["catalog"]:
