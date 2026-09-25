@@ -118,13 +118,30 @@ class GraphStorage:
     def _item(self, path: str) -> str:
         return f"{self.drive}/root:/{quote(path.strip('/'))}:"
 
+    def drive_info(self) -> dict:
+        """The OneDrive itself; raises if the user or drive does not exist."""
+        r = self.http.get(f"{self.drive}?$select=driveType,owner,webUrl", headers=self._headers(), timeout=30)
+        if r.status_code == 404:
+            raise FileNotFoundError(f"No OneDrive found for {self.drive.split('/users/')[1].split('/')[0]!r}")
+        r.raise_for_status()
+        return r.json()
+
+    def folder_exists(self, folder: str) -> bool:
+        r = self.http.get(f"{self._item(folder)}?$select=folder", headers=self._headers(), timeout=30)
+        if r.status_code == 404:
+            return False
+        r.raise_for_status()
+        return "folder" in r.json()
+
     def list(self, folder: str, pattern: str = "*") -> list[FileInfo]:
         url = f"{self._item(folder)}/children?$select=name,size,lastModifiedDateTime,file&$top=999"
         out = []
         while url:
             r = self.http.get(url, headers=self._headers(), timeout=60)
             if r.status_code == 404:
-                return []
+                # A wrong account or folder name must fail loudly, not look like "no new files"
+                self.drive_info()
+                raise FileNotFoundError(f"Folder '{folder}' not found in this OneDrive")
             r.raise_for_status()
             body = r.json()
             for it in body.get("value", []):

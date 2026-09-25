@@ -23,6 +23,11 @@ st.caption("Normalmente no hace falta: el export diario llega a OneDrive por cor
 
 s = data.settings()
 storage = data.store().storage
+try:
+    storage.list(s.incoming_dir, "*.none")
+except Exception as exc:
+    st.error(f"No se puede acceder a la carpeta de OneDrive `{s.incoming_dir}`: {exc}")
+    st.stop()
 KINDS = {
     "Catálogo diario (STEP)": ("catalog-daily-{day}.xlsx", "catalog_pattern"),
     "Productividad Diseño": ("productivity-diseno-{day}.xlsx", "diseno_pattern"),
