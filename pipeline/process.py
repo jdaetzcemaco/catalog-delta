@@ -124,31 +124,64 @@ class Job:
         source = {k: entry[k] for k in ("source", "modified", "size") if k in entry}
         self._compute(index, day, today_raw, source)
 
-    def run_catalogs(self, report: PassReport) -> None:
+    def select_catalogs(self, index: dict, files: dict[str, FileInfo], backfill: int | None) -> list:
+        """
+        Which catalog files this pass processes, oldest first.
+
+        Only days from the oldest processed day onward are considered, so older exports
+        sitting in incoming/ are never picked up by accident. Going further back is
+        explicit: `backfill` = the newest N files; an empty store starts with the newest
+        `bootstrap_files`.
+        """
+        processed = index["catalog"]
+        if backfill:
+            window = set(list(files)[-backfill:])
+        elif not processed:
+            window = set(list(files)[-self.settings.bootstrap_files:])
+        else:
+            window = set()
+        oldest = min(processed) if processed else None
+        todo = [(day, f) for day, f in files.items()
+                if (day in window or (oldest is not None and day >= oldest)) and is_new(processed.get(day), f)]
+        skipped = sum(1 for day in files if day not in window and (oldest is None or day < oldest))
+        if skipped:
+            log.info("%s older catalog files left alone (use --backfill N to process them)", skipped)
+        return todo
+
+    def run_catalogs(self, report: PassReport, backfill: int | None = None) -> None:
         s = self.settings
         index = self.store.load_index()
         files = latest_per_day(self.storage.list(s.incoming_dir, s.catalog_pattern))
-        todo = [(day, f) for day, f in files.items() if is_new(index["catalog"].get(day), f)]
-        if not index["catalog"] and len(todo) > s.bootstrap_files:
-            log.info("Empty store: starting from the newest %s of %s catalog files", s.bootstrap_files, len(todo))
-            todo = todo[-s.bootstrap_files:]
-        if not todo:
+        todo = self.select_catalogs(index, files, backfill)
+        if todo:
+            log.info("Processing %s catalog files: %s … %s", len(todo), todo[0][0], todo[-1][0])
+        else:
             log.info("No new catalog files")
+        todo_days = {d for d, _ in todo}
         for day, f in todo:
             try:
-                follower = self._next_day(index, day)
                 self.process_catalog(index, day, f)
                 report.catalogs.append(day)
-                # A day that arrived late changes the baseline of the day after it
-                if follower and follower not in {d for d, _ in todo}:
-                    self.recompute_from_snapshot(index, follower)
-                    report.recomputed.append(follower)
             except Exception as exc:
                 log.exception("Catalog %s (%s) failed", day, f.name)
                 report.errors.append(f"catalog {f.name}: {exc}")
             gc.collect()
-            if self.owner:
-                self.store.acquire_lock(self.owner)  # keep the lease alive during a backfill
+            self._renew_lock()
+
+        # A day that arrived late changes the baseline of the stored day right after it
+        followers = sorted({n for d in report.catalogs for n in [self._next_day(index, d)] if n and n not in todo_days})
+        for day in followers:
+            try:
+                self.recompute_from_snapshot(index, day)
+                report.recomputed.append(day)
+            except Exception as exc:
+                log.exception("Recompute %s failed", day)
+                report.errors.append(f"recompute {day}: {exc}")
+            self._renew_lock()
+
+    def _renew_lock(self) -> None:
+        if self.owner:
+            self.store.acquire_lock(self.owner)  # keep the lease alive during a backfill
 
     # ── productivity ────────────────────────────────────────────────────────
     def run_productivity(self, report: PassReport) -> None:
@@ -171,7 +204,7 @@ class Job:
                     log.exception("Productivity %s (%s) failed", team, f.name)
                     report.errors.append(f"productivity {f.name}: {exc}")
 
-    def run(self) -> PassReport:
+    def run(self, backfill: int | None = None) -> PassReport:
         report = PassReport()
         owner = self.owner = f"{os.uname().nodename}:{os.getpid()}:{datetime.now().timestamp():.0f}"
         if not self.store.acquire_lock(owner):
@@ -179,7 +212,7 @@ class Job:
             report.skipped = True
             return report
         try:
-            self.run_catalogs(report)
+            self.run_catalogs(report, backfill)
             self.run_productivity(report)
         finally:
             self.store.release_lock(owner)

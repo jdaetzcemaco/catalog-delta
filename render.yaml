@@ -31,6 +31,9 @@ services:
     startCommand: python -m pipeline
     envVars:
       - fromGroup: catalog-delta-shared
+      # Only used while the store is empty: the first run builds ~6 weeks of history
+      - key: BOOTSTRAP_FILES
+        value: "30"
       - key: GRAPH_DRIVE_USER
         sync: false
       - key: GRAPH_CLIENT_SECRET

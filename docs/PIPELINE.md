@@ -17,7 +17,10 @@ OneDrive `cemaco-reports/incoming/` and exits; a pass with nothing new takes und
 3. If a day arrives late, the day after it is recomputed so its comparison is right.
 4. Stores the newest `productivity-diseno-*` / `productivity-edicion-*` per day under
    `productivity/<day>/`.
-5. On an empty store it starts from the newest 2 catalog files (`BOOTSTRAP_FILES`).
+5. On an empty store it starts from the newest `BOOTSTRAP_FILES` catalog files (2 by
+   default, 30 on Render). After that it only considers days from the oldest processed
+   day onward, so old exports in `incoming/` are never picked up by accident; use
+   `python -m pipeline --backfill N` to go further back on purpose.
 
 Measured on the real exports (193,661 and 203,595 SKUs): 18 s and 1.8 GB peak memory for
 both days. Use an instance with at least 4 GB for the cron job.
@@ -50,4 +53,5 @@ The job uses Microsoft Graph instead:
 ```bash
 python -m pipeline --local data/onedrive --no-history      # folder laid out like OneDrive
 python -m pipeline --recompute 2026-03-31 --local data/onedrive --no-history
+python -m pipeline --backfill 30 --no-history                  # real OneDrive, newest 30 exports
 ```

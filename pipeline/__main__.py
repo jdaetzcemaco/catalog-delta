@@ -3,6 +3,7 @@ Run one pass of the processing job.
 
     python -m pipeline                       # OneDrive + Google Sheets (Render cron)
     python -m pipeline --local data/onedrive --no-history
+    python -m pipeline --backfill 30         # build history from the newest 30 exports
     python -m pipeline --recompute 2026-03-31
 """
 
@@ -22,6 +23,8 @@ def main(argv: list[str] | None = None) -> int:
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--local", metavar="ROOT", help="Use a local folder instead of OneDrive")
     p.add_argument("--no-history", action="store_true", help="Do not write the Google Sheets history")
+    p.add_argument("--backfill", type=int, metavar="N",
+                   help="Also process the newest N catalog files, even if older than what is stored")
     p.add_argument("--recompute", metavar="YYYY-MM-DD", help="Re-run a stored day from its snapshot")
     p.add_argument("-v", "--verbose", action="store_true")
     args = p.parse_args(argv)
@@ -53,7 +56,7 @@ def main(argv: list[str] | None = None) -> int:
         job.recompute_from_snapshot(index, args.recompute)
         report = PassReport(recomputed=[args.recompute])
     else:
-        report = job.run()
+        report = job.run(backfill=args.backfill)
 
     if report.skipped:
         return 0

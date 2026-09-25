@@ -175,3 +175,27 @@ def test_concurrent_run_is_skipped_and_stale_lock_ignored(env):
     assert not r.skipped and r.catalogs == ["2026-04-01"]
     # Released afterwards, so the next scheduled run can go
     assert not job.run().skipped
+
+
+def test_older_files_are_left_alone_until_backfill(env):
+    job, drop, history, sku = env
+    for d, rows in [("01", [sku("1")]), ("02", [sku("1"), sku("2")]), ("03", [sku("1")]), ("04", [sku("1"), sku("4")])]:
+        drop(f"catalog-daily-2026-04-{d}.xlsx", rows)
+    assert job.run().catalogs == ["2026-04-03", "2026-04-04"]
+    # A later pass must not pick up 01/02 just because they are unprocessed
+    assert not job.run().did_work
+
+    r = job.run(backfill=4)
+    assert r.catalogs == ["2026-04-01", "2026-04-02"] and r.recomputed == ["2026-04-03"]
+    m3 = job.store.load_manifest("2026-04-03")
+    assert m3["previous_day"] == "2026-04-02" and m3["sku_changes"]["removed"] == 1
+    assert job.store.load_manifest("2026-04-04")["previous_day"] == "2026-04-03"
+
+
+def test_late_file_inside_processed_window_is_still_picked_up(env):
+    job, drop, history, sku = env
+    drop("catalog-daily-2026-04-01.xlsx", [sku("1")])
+    drop("catalog-daily-2026-04-03.xlsx", [sku("1")])
+    job.run()
+    drop("catalog-daily-2026-04-02.xlsx", [sku("1")])
+    assert job.run().catalogs == ["2026-04-02"]

@@ -35,8 +35,9 @@ Both use Python 3.12 and the pinned `requirements.txt` (verified with the full p
    | `RENDER_CRON_JOB_ID` | | ✓ | optional, the job's ID (`crn-…`, in its URL) |
 
 3. **Apply**. When the job's first build finishes, open it and click **Trigger Run** instead
-   of waiting 30 minutes. The first run on an empty store processes the newest 2 catalog
-   files (about 20 s each) and all productivity files. Check its logs for `Done: … errors=0`.
+   of waiting 30 minutes. The first run on an empty store processes the newest 30 catalog
+   files (`BOOTSTRAP_FILES`, about 15–20 min) and all productivity files. If the store was
+   already filled locally with `--backfill`, it just continues from there. Check its logs for `Done: … errors=0`.
 4. Open the web service URL, log in, and check that Resumen shows the latest day.
 
 ## Manual uploads
