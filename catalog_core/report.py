@@ -29,20 +29,29 @@ INVENTORY_SHEETS = {
 @dataclass
 class CatalogRun:
     today_raw: pd.DataFrame
-    yesterday_raw: pd.DataFrame
-    today: pd.DataFrame           # flags
-    yesterday: pd.DataFrame       # flags
-    merged: pd.DataFrame
+    yesterday_raw: pd.DataFrame | None
+    today: pd.DataFrame                  # flags
+    yesterday: pd.DataFrame | None       # flags
+    merged: pd.DataFrame | None
     summary: pd.DataFrame
-    sku_changes: dict
+    sku_changes: dict | None
     changes: dict[str, pd.DataFrame]
     inventory: InventoryReport
 
 
-def run_catalog(today_raw: pd.DataFrame, yesterday_raw: pd.DataFrame) -> CatalogRun:
+def run_catalog(today_raw: pd.DataFrame, yesterday_raw: pd.DataFrame | None) -> CatalogRun:
+    """
+    Run every catalog rule. Without a previous snapshot (the very first day) only
+    today's health and inventory are computed; there are no change tables.
+    """
     today = build_flags(today_raw)
-    yesterday = build_flags(yesterday_raw)
-    merged = compute_deltas(today, yesterday)
+    yesterday = merged = changes_ = None
+    changes: dict[str, pd.DataFrame] = {}
+    if yesterday_raw is not None:
+        yesterday = build_flags(yesterday_raw)
+        merged = compute_deltas(today, yesterday)
+        changes_ = sku_changes(today, yesterday)
+        changes = change_tables(today, yesterday, merged)
     return CatalogRun(
         today_raw=today_raw,
         yesterday_raw=yesterday_raw,
@@ -50,8 +59,8 @@ def run_catalog(today_raw: pd.DataFrame, yesterday_raw: pd.DataFrame) -> Catalog
         yesterday=yesterday,
         merged=merged,
         summary=build_summary(today),
-        sku_changes=sku_changes(today, yesterday),
-        changes=change_tables(today, yesterday, merged),
+        sku_changes=changes_,
+        changes=changes,
         inventory=build_inventory(today_raw, today, yesterday_raw),
     )
 
