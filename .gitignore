@@ -22,3 +22,6 @@ ENV/
 .idea/
 .vscode/
 *.swp
+
+# Local real data and parity outputs (never commit)
+data/
