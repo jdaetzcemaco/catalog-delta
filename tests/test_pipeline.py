@@ -141,3 +141,17 @@ def test_parquet_round_trip_keeps_text_and_nan():
     assert back["SKU"].tolist() == ["1", "2"]
     assert pd.isna(back.loc[0, "MODAL"]) and back.loc[1, "MODAL"] == "M"
     assert back["mixed"].tolist() == ["1", "a"]
+
+
+def test_excel_from_store_matches_sheet_order(env):
+    from pipeline.export import excel_sheets_from_store
+
+    job, drop, history, sku = env
+    drop("catalog-daily-2026-04-01.xlsx", [sku("1")])
+    drop("catalog-daily-2026-04-02.xlsx", [sku("1", VISIBLE="No"), sku("2")])
+    job.run()
+    sheets = excel_sheets_from_store(job.store, "2026-04-02")
+    names = list(sheets)
+    assert names[0] == "Catalog Health" and names[1:3] == ["New SKUs", "Removed SKUs"]
+    assert names.index("Stock No Visible") > names.index("Stock Not Visible")
+    assert sheets["Catalog Health"]["Total SKUs"].iloc[0] == 2

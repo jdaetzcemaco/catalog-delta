@@ -1,0 +1,20 @@
+[server]
+# Catalog exports are 100-130 MB
+maxUploadSize = 300
+headless = true
+
+[browser]
+gatherUsageStats = false
+
+[theme]
+base = "light"
+primaryColor = "#C8102E"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F5F6F8"
+textColor = "#1F2430"
+font = "sans serif"
+baseRadius = "0.6rem"
+showWidgetBorder = true
+
+[theme.sidebar]
+backgroundColor = "#F5F6F8"

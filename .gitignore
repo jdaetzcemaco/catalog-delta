@@ -25,3 +25,4 @@ ENV/
 
 # Local real data and parity outputs (never commit)
 data/
+.claude/

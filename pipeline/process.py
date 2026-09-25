@@ -71,7 +71,7 @@ def latest_per_day(files: list[FileInfo]) -> dict[str, FileInfo]:
     return dict(sorted(out.items()))
 
 
-def _is_new(entry: dict | None, f: FileInfo) -> bool:
+def is_new(entry: dict | None, f: FileInfo) -> bool:
     return entry is None or entry.get("source") != f.name or entry.get("modified") != f.modified.isoformat() \
         or entry.get("size") != f.size
 
@@ -126,7 +126,7 @@ class Job:
         s = self.settings
         index = self.store.load_index()
         files = latest_per_day(self.storage.list(s.incoming_dir, s.catalog_pattern))
-        todo = [(day, f) for day, f in files.items() if _is_new(index["catalog"].get(day), f)]
+        todo = [(day, f) for day, f in files.items() if is_new(index["catalog"].get(day), f)]
         if not index["catalog"] and len(todo) > s.bootstrap_files:
             log.info("Empty store: starting from the newest %s of %s catalog files", s.bootstrap_files, len(todo))
             todo = todo[-s.bootstrap_files:]
@@ -154,7 +154,7 @@ class Job:
         for team in TEAMS:
             seen = index["productivity"].setdefault(team, {})
             for day, f in latest_per_day(self.storage.list(s.incoming_dir, patterns[team])).items():
-                if not _is_new(seen.get(day), f):
+                if not is_new(seen.get(day), f):
                     continue
                 try:
                     df = load_productivity(self.storage.read(f.path))
