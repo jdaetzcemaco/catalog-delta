@@ -37,10 +37,10 @@ def main(argv: list[str] | None = None) -> int:
         settings.history_enabled = False
 
     history = None
-    if settings.history_enabled:
-        if not settings.google_service_account:
-            logging.error("GCP_SERVICE_ACCOUNT_JSON is not set (or pass --no-history)")
-            return 2
+    if settings.history_enabled and not settings.google_service_account:
+        # Results are still stored (and the app's Historial page works); only the sheet is skipped
+        logging.warning("GCP_SERVICE_ACCOUNT_JSON is not set: skipping the Google Sheets history")
+    elif settings.history_enabled:
         from .history_sheet import SheetHistory
         history = SheetHistory(settings.google_sheet_id, settings.google_service_account)
 

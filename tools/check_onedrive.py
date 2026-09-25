@@ -30,7 +30,9 @@ def main() -> int:
     except requests.HTTPError as exc:
         body = exc.response.text[:500] if exc.response is not None else ""
         print(f"Graph error {exc.response.status_code if exc.response is not None else ''}: {body}")
-        if exc.response is not None and exc.response.status_code in (401, 403):
+        if "AADSTS7000215" in body:
+            print("→ The secret is wrong: use the secret's *Value* (shown once when created), not its Secret ID.")
+        elif exc.response is not None and exc.response.status_code in (401, 403):
             print("→ Usually: admin consent not granted yet, wrong secret value, or wrong GRAPH_DRIVE_USER.")
         return 1
 

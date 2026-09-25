@@ -1,19 +1,62 @@
-services:
-  - type: web
-    name: catalog-delta-api
-    env: python
-    buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn api:app --host 0.0.0.0 --port $PORT
+# Render Blueprint: New → Blueprint → this repo. Values marked `sync: false` are asked
+# for once when the Blueprint is created (then edit them in each service's Environment tab).
+# See docs/DEPLOY.md.
+
+envVarGroups:
+  - name: catalog-delta-shared
     envVars:
-      - key: GCP_PROJECT_ID
+      - key: PYTHON_VERSION
+        value: 3.12.13
+      - key: STORAGE
+        value: graph
+      - key: GRAPH_TENANT_ID
+        value: 7944ce02-7df9-4a4a-97ac-85a2b2f936cb
+      - key: GRAPH_CLIENT_ID
+        value: 5c2b4d58-48a8-4c16-9ffe-b0ee5948d551
+      - key: INCOMING_DIR
+        value: cemaco-reports/incoming
+      - key: PROCESSED_DIR
+        value: cemaco-reports/processed
+
+services:
+  # Processing job: every 30 min, processes whatever is new in OneDrive incoming/.
+  # Peak ~1.8 GB while reading a catalog, so it needs the 4 GB plan; billed per run time.
+  - type: cron
+    name: catalog-delta-job
+    runtime: python
+    region: virginia
+    plan: pro
+    schedule: "*/30 * * * *"
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -m pipeline
+    envVars:
+      - fromGroup: catalog-delta-shared
+      - key: GRAPH_DRIVE_USER
         sync: false
-      - key: GCP_PRIVATE_KEY_ID
+      - key: GRAPH_CLIENT_SECRET
         sync: false
-      - key: GCP_PRIVATE_KEY
+      - key: GCP_SERVICE_ACCOUNT_JSON
         sync: false
-      - key: GCP_CLIENT_EMAIL
+
+  # Web app: reads stored results only (never the raw exports).
+  - type: web
+    name: catalog-delta-web
+    runtime: python
+    region: virginia
+    plan: standard
+    buildCommand: pip install -r requirements.txt
+    startCommand: streamlit run streamlit_app.py --server.port $PORT --server.address 0.0.0.0
+    healthCheckPath: /_stcore/health
+    envVars:
+      - fromGroup: catalog-delta-shared
+      - key: GRAPH_DRIVE_USER
         sync: false
-      - key: GCP_CLIENT_ID
+      - key: GRAPH_CLIENT_SECRET
         sync: false
-      - key: GCP_CLIENT_X509_CERT_URL
+      - key: APP_PASSWORD
+        sync: false
+      # Optional: start the job right after a manual upload (else it runs within 30 min)
+      - key: RENDER_API_KEY
+        sync: false
+      - key: RENDER_CRON_JOB_ID
         sync: false
