@@ -55,6 +55,8 @@ def main(argv: list[str] | None = None) -> int:
     else:
         report = job.run()
 
+    if report.skipped:
+        return 0
     logging.info("Done: catalogs=%s recomputed=%s productivity=%s errors=%s",
                  report.catalogs, report.recomputed, report.productivity, len(report.errors))
     for err in report.errors:

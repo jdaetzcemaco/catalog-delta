@@ -155,3 +155,23 @@ def test_excel_from_store_matches_sheet_order(env):
     assert names[0] == "Catalog Health" and names[1:3] == ["New SKUs", "Removed SKUs"]
     assert names.index("Stock No Visible") > names.index("Stock Not Visible")
     assert sheets["Catalog Health"]["Total SKUs"].iloc[0] == 2
+
+
+def test_concurrent_run_is_skipped_and_stale_lock_ignored(env):
+    import json
+    from datetime import datetime, timedelta, timezone
+
+    job, drop, history, sku = env
+    drop("catalog-daily-2026-04-01.xlsx", [sku("1")])
+    lock_path = "cemaco-reports/processed/lock.json"
+    fresh = {"owner": "other-host", "since": datetime.now(timezone.utc).isoformat()}
+    job.storage.write(lock_path, json.dumps(fresh).encode())
+    r = job.run()
+    assert r.skipped and not r.catalogs
+
+    stale = {"owner": "other-host", "since": (datetime.now(timezone.utc) - timedelta(hours=3)).isoformat()}
+    job.storage.write(lock_path, json.dumps(stale).encode())
+    r = job.run()
+    assert not r.skipped and r.catalogs == ["2026-04-01"]
+    # Released afterwards, so the next scheduled run can go
+    assert not job.run().skipped

@@ -76,6 +76,28 @@ class ResultStore:
     def source_entry(f: FileInfo) -> dict:
         return {"source": f.name, "modified": f.modified.isoformat(), "size": f.size}
 
+    # ── run lock ────────────────────────────────────────────────────────────
+    def acquire_lock(self, owner: str, ttl_minutes: int = 90) -> bool:
+        """
+        Best-effort lease so a long backfill and the next scheduled run never
+        process the same files. A lock older than ttl is treated as abandoned.
+        """
+        raw = self.storage.read(self._p("lock.json"))
+        if raw:
+            lock = json.loads(raw)
+            age = datetime.now(timezone.utc) - datetime.fromisoformat(lock["since"])
+            if lock.get("owner") != owner and age.total_seconds() < ttl_minutes * 60:
+                return False
+        self.storage.write(self._p("lock.json"), json.dumps({"owner": owner, "since": _utc_now()}).encode())
+        return json.loads(self.storage.read(self._p("lock.json")) or b"{}").get("owner") == owner
+
+    def release_lock(self, owner: str) -> None:
+        raw = self.storage.read(self._p("lock.json"))
+        if raw and json.loads(raw).get("owner") == owner:
+            # Expired lock instead of a delete: the storage interface never deletes files
+            self.storage.write(self._p("lock.json"), json.dumps(
+                {"owner": None, "since": "1970-01-01T00:00:00+00:00"}).encode())
+
     # ── snapshots ───────────────────────────────────────────────────────────
     def save_snapshot(self, day: str, df: pd.DataFrame) -> None:
         self.storage.write(self._p("snapshots", f"{day}.parquet"), to_parquet_bytes(df))

@@ -46,6 +46,7 @@ class PassReport:
     recomputed: list[str] = field(default_factory=list)
     productivity: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
+    skipped: bool = False
 
     @property
     def did_work(self) -> bool:
@@ -82,6 +83,7 @@ class Job:
         self.storage = storage
         self.store = ResultStore(storage, settings.processed_dir)
         self.history = history
+        self.owner: str | None = None
 
     # ── catalog ─────────────────────────────────────────────────────────────
     def _previous_day(self, index: dict, day: str) -> str | None:
@@ -145,6 +147,8 @@ class Job:
                 log.exception("Catalog %s (%s) failed", day, f.name)
                 report.errors.append(f"catalog {f.name}: {exc}")
             gc.collect()
+            if self.owner:
+                self.store.acquire_lock(self.owner)  # keep the lease alive during a backfill
 
     # ── productivity ────────────────────────────────────────────────────────
     def run_productivity(self, report: PassReport) -> None:
@@ -169,6 +173,14 @@ class Job:
 
     def run(self) -> PassReport:
         report = PassReport()
-        self.run_catalogs(report)
-        self.run_productivity(report)
+        owner = self.owner = f"{os.uname().nodename}:{os.getpid()}:{datetime.now().timestamp():.0f}"
+        if not self.store.acquire_lock(owner):
+            log.info("Another run is in progress; skipping this one")
+            report.skipped = True
+            return report
+        try:
+            self.run_catalogs(report)
+            self.run_productivity(report)
+        finally:
+            self.store.release_lock(owner)
         return report
