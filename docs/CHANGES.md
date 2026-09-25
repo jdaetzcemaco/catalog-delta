@@ -14,6 +14,7 @@ v1 definitions except for the fixes below, each tagged `FIX Fn` in the code.
 | F5 | Section F counted only `VISIBLE == "si"` as visible. | Same yes-values as everywhere (si, sí, yes, true, 1). |
 | F6 | History delta compared with the sheet's last row, so a second save in a day compared the day with itself. | Delta vs the latest earlier date; re-running a day updates its row. |
 | F7 | Non-physical filter matched "certificado de regalo", but the export says "Certificados De Regalo" (217 SKUs), so gift certificates were treated as physical products. | Matches singular and plural. |
+| F8 | "Score = 100" counted SKUs scoring 100, but the weights add up to 95, so it was always 0 (also in the history sheet). | "Perfect Score" counts SKUs at the maximum (95). Scores themselves are unchanged. History rows before the switch show 0. |
 
 ## Parity on real files (today 2026-03-31, yesterday 2025-12-04, productivity 2026-04-23)
 
@@ -34,8 +35,3 @@ cell by cell. Every difference traces to a fix:
 
 Speed: v1 needed 100 s and 1.1 GB RAM for the two catalogs; the rebuild reads and
 computes both in 15 s.
-
-## Open question
-
-- **"Score = 100" is always 0.** The weights add up to 95, so no SKU can reach 100.
-  Kept as-is until decided: count SKUs at the maximum (95), or rescale the weights.

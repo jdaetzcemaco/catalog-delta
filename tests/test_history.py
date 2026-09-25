@@ -5,7 +5,7 @@ from catalog_core.history import row_index_for_day
 
 SUMMARY = pd.DataFrame([{
     "Total SKUs": 1000, "Visible": 300, "Visible %": 30.0, "With Image %": 90.0,
-    "With Price %": 99.0, "With Stock %": 25.0, "Avg Content Score": 85.5, "Score = 100": 0,
+    "With Price %": 99.0, "With Stock %": 25.0, "Avg Content Score": 85.5, "Perfect Score": 0,
 }])
 
 

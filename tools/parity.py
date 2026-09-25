@@ -51,7 +51,7 @@ def new_metrics(run, prod) -> dict[tuple[str, str], float]:
         ("📈 Catalog Health Summary", "With Price %"): s["With Price %"],
         ("📈 Catalog Health Summary", "With Stock %"): s["With Stock %"],
         ("📈 Catalog Health Summary", "Avg Content Score"): s["Avg Content Score"],
-        ("📈 Catalog Health Summary", "Perfect Score (100)"): s["Score = 100"],
+        ("📈 Catalog Health Summary", "Perfect Score (100)"): s["Perfect Score"],
         ("🔄 Changes Detected", "Score Changes (±10+)"): len(ch["Score Changes"]),
         ("📦 Inventario Omnicanal", "🚫 Stock sin Visibilidad"): inv["stock_no_visible"],
         ("📦 Inventario Omnicanal", "📉 Stock+Visible, Score<80"): inv["stock_visible_score_bajo"],

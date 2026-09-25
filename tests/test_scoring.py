@@ -51,5 +51,5 @@ def test_summary(make_sku, make_catalog):
     assert s["Visible %"] == 50.0
     assert s["With Stock %"] == 50.0
     assert s["Avg Content Score"] == 90.0
-    # Weights sum to 95, so this is always 0 (kept as in v1; see docs/CHANGES.md)
-    assert s["Score = 100"] == 0
+    # Only the complete SKU reaches the maximum (95)
+    assert s["Perfect Score"] == 1

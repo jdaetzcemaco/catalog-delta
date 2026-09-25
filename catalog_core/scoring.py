@@ -15,6 +15,8 @@ SCORE_WEIGHTS = {
     "taxonomy_depth": 15,
     "is_visible": 10,
 }
+# Weights add up to 95, so a complete SKU scores 95, not 100
+MAX_SCORE = sum(SCORE_WEIGHTS.values())
 
 
 def build_flags(df: pd.DataFrame) -> pd.DataFrame:
@@ -83,5 +85,6 @@ def build_summary(flags: pd.DataFrame) -> pd.DataFrame:
         "With Price %": round(flags["has_price"].mean() * 100, 2),
         "With Stock %": round(flags["has_stock"].mean() * 100, 2),
         "Avg Content Score": round(flags["content_score"].mean(), 2),
-        "Score = 100": int((flags["content_score"] == 100).sum()),
+        # FIX F8: v1 counted score == 100, which no SKU can reach
+        "Perfect Score": int((flags["content_score"] == MAX_SCORE).sum()),
     }])

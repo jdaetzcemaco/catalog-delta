@@ -12,7 +12,7 @@ HISTORY_HEADER = [
     "Date", "Total SKUs", "Δ SKUs", "Visible", "Δ Visible", "Visible %",
     "With Image %", "Δ Image %", "With Price %", "Δ Price %",
     "With Stock %", "Δ Stock %", "Avg Content Score", "Δ Score",
-    "Score = 100", "Δ Perfect",
+    "Perfect Score", "Δ Perfect",
 ]
 
 # Where each value sits in a previous row. v1 wrote a 9-column layout before deltas existed.
@@ -71,7 +71,7 @@ def build_history_row(summary: pd.DataFrame, day: str, rows: list[list[str]]) ->
         "price": float(s["With Price %"]),
         "stock": float(s["With Stock %"]),
         "score": float(s["Avg Content Score"]),
-        "perfect": int(s["Score = 100"]),
+        "perfect": int(s["Perfect Score"]),
     }
     prev_row = previous_day_row(rows, day)
     prev = _parse_previous(prev_row) if prev_row else None

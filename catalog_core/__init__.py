@@ -9,7 +9,7 @@ Rules marked `FIX Fn` intentionally differ from the v1 app (see docs/CHANGES.md)
 """
 
 from .loaders import load_catalog, load_productivity
-from .scoring import SCORE_WEIGHTS, build_flags, build_summary
+from .scoring import MAX_SCORE, SCORE_WEIGHTS, build_flags, build_summary
 from .deltas import compute_deltas, sku_changes, change_tables
 from .inventory import InventoryReport, build_inventory
 from .productivity import ProductivityReport, build_productivity
@@ -18,7 +18,7 @@ from .report import CatalogRun, run_catalog, excel_sheets, to_excel_bytes
 
 __all__ = [
     "load_catalog", "load_productivity",
-    "SCORE_WEIGHTS", "build_flags", "build_summary",
+    "MAX_SCORE", "SCORE_WEIGHTS", "build_flags", "build_summary",
     "compute_deltas", "sku_changes", "change_tables",
     "InventoryReport", "build_inventory",
     "ProductivityReport", "build_productivity",
