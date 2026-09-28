@@ -199,3 +199,15 @@ def test_late_file_inside_processed_window_is_still_picked_up(env):
     job.run()
     drop("catalog-daily-2026-04-02.xlsx", [sku("1")])
     assert job.run().catalogs == ["2026-04-02"]
+
+
+def test_backfill_reuses_the_day_just_computed(env, monkeypatch):
+    job, drop, history, sku = env
+    for d in ["01", "02", "03"]:
+        drop(f"catalog-daily-2026-04-{d}.xlsx", [sku("1"), sku(d)])
+    loads = []
+    real = job.store.load_snapshot
+    monkeypatch.setattr(job.store, "load_snapshot", lambda day, columns=None: loads.append(day) or real(day, columns))
+    assert job.run(backfill=3).catalogs == ["2026-04-01", "2026-04-02", "2026-04-03"]
+    assert loads == []  # no snapshot downloaded: each previous day was still in memory
+    assert job.store.load_manifest("2026-04-03")["sku_changes"] == {"new": 1, "removed": 1, "net": 0}

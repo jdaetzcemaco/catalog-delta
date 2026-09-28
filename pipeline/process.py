@@ -84,6 +84,7 @@ class Job:
         self.store = ResultStore(storage, settings.processed_dir)
         self.history = history
         self.owner: str | None = None
+        self._last: tuple[str, pd.DataFrame] | None = None
 
     # ── catalog ─────────────────────────────────────────────────────────────
     def _previous_day(self, index: dict, day: str) -> str | None:
@@ -96,14 +97,20 @@ class Job:
 
     def _compute(self, index: dict, day: str, today_raw: pd.DataFrame, source: dict) -> None:
         prev = self._previous_day(index, day)
-        yesterday_raw = self.store.load_snapshot(prev) if prev else None
+        if prev and self._last and self._last[0] == prev:
+            # Backfills go day by day: the previous day is the one just computed
+            yesterday_raw = self._last[1]
+        else:
+            yesterday_raw = self.store.load_snapshot(prev) if prev else None
         log.info("%s: %s SKUs, compared with %s", day, f"{len(today_raw):,}", prev or "nothing (first day)")
         run = run_catalog(today_raw, yesterday_raw)
         del yesterday_raw
+        self._last = None  # drop the old reference before holding today's
         self.store.save_snapshot(day, today_raw)
         self.store.save_run(day, run, source, prev)
         if self.history is not None:
             self.history.upsert(day, run.summary)
+        self._last = (day, today_raw)
         index["catalog"][day] = {**source, "previous_day": prev,
                                  "processed_at": datetime.now().astimezone().isoformat(timespec="seconds")}
         self.store.save_index(index)

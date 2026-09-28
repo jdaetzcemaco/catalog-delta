@@ -67,3 +67,44 @@ def test_missing_folder_fails_loudly():
 def test_missing_settings_are_named():
     with pytest.raises(ValueError, match="GRAPH_CLIENT_SECRET"):
         GraphStorage("t", "c", "", "u")
+
+
+class FlakyGraph(FakeGraph):
+    """Drops the connection or throttles the first calls, then answers normally."""
+
+    def __init__(self, *a, failures):
+        super().__init__(*a)
+        self.failures = list(failures)
+        self.calls = 0
+
+    def get(self, url, **kw):
+        self.calls += 1
+        if self.failures:
+            f = self.failures.pop(0)
+            if isinstance(f, Exception):
+                raise f
+            return _Resp(f)
+        return super().get(url, **kw)
+
+
+def _flaky(failures):
+    import requests
+    graph = FlakyGraph("juan%40cemaco.com", {"cemaco-reports/incoming": [FILE]}, failures=failures)
+    s = GraphStorage("tenant", "client", "secret", "juan@cemaco.com", session=graph)
+    s._sleep = lambda seconds: None
+    return s, graph, requests
+
+
+def test_dropped_connection_and_throttling_are_retried():
+    s, graph, requests = _flaky([])
+    graph.failures = [requests.exceptions.ChunkedEncodingError("reset by peer"), 429, 503]
+    assert [f.name for f in s.list("cemaco-reports/incoming")] == ["catalog-daily-2026-04-01.xlsx"]
+    assert graph.calls == 4
+
+
+def test_gives_up_after_repeated_failures():
+    s, graph, requests = _flaky([])
+    graph.failures = [requests.ConnectionError("down")] * 10
+    with pytest.raises(requests.ConnectionError):
+        s.list("cemaco-reports/incoming")
+    assert graph.calls == 5

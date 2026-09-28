@@ -20,6 +20,10 @@ from urllib.parse import quote
 import requests
 
 GRAPH = "https://graph.microsoft.com/v1.0"
+# Throttling and transient server errors that Graph asks clients to retry
+RETRY_STATUS = {429, 500, 502, 503, 504}
+RETRY_ERRORS = (requests.ConnectionError, requests.Timeout, requests.exceptions.ChunkedEncodingError)
+ATTEMPTS = 5
 SIMPLE_UPLOAD_MAX = 4 * 1024 * 1024
 CHUNK = 320 * 1024 * 32  # 10 MiB, a multiple of 320 KiB as Graph requires
 
@@ -97,11 +101,32 @@ class GraphStorage:
         self.drive = f"{GRAPH}/users/{quote(drive_user)}/drive"
         self.http = session or requests.Session()
         self._token, self._token_exp = "", 0.0
+        self._sleep = time.sleep
+
+    def _call(self, method: str, url: str, *, auth: bool = True, **kw) -> requests.Response:
+        """
+        One HTTP call with retries: a dropped connection or a throttled/5xx answer is
+        retried with backoff (Retry-After when Graph sends it) before giving up.
+        """
+        extra = kw.pop("headers", {})
+        for attempt in range(1, ATTEMPTS + 1):
+            try:
+                headers = {**(self._headers() if auth else {}), **extra}
+                r = getattr(self.http, method)(url, headers=headers, **kw)
+                if r.status_code not in RETRY_STATUS or attempt == ATTEMPTS:
+                    return r
+                wait = float(r.headers.get("Retry-After", 2 ** attempt)) if hasattr(r, "headers") else 2 ** attempt
+            except RETRY_ERRORS:
+                if attempt == ATTEMPTS:
+                    raise
+                wait = 2 ** attempt
+            self._sleep(min(wait, 60))
+        raise AssertionError("unreachable")
 
     def _headers(self) -> dict:
         if time.time() > self._token_exp - 60:
-            r = self.http.post(
-                f"https://login.microsoftonline.com/{self.tenant_id}/oauth2/v2.0/token",
+            r = self._call(
+                "post", f"https://login.microsoftonline.com/{self.tenant_id}/oauth2/v2.0/token", auth=False,
                 data={
                     "grant_type": "client_credentials",
                     "client_id": self.client_id,
@@ -120,14 +145,14 @@ class GraphStorage:
 
     def drive_info(self) -> dict:
         """The OneDrive itself; raises if the user or drive does not exist."""
-        r = self.http.get(f"{self.drive}?$select=driveType,owner,webUrl", headers=self._headers(), timeout=30)
+        r = self._call("get", f"{self.drive}?$select=driveType,owner,webUrl", timeout=30)
         if r.status_code == 404:
             raise FileNotFoundError(f"No OneDrive found for {self.drive.split('/users/')[1].split('/')[0]!r}")
         r.raise_for_status()
         return r.json()
 
     def folder_exists(self, folder: str) -> bool:
-        r = self.http.get(f"{self._item(folder)}?$select=folder", headers=self._headers(), timeout=30)
+        r = self._call("get", f"{self._item(folder)}?$select=folder", timeout=30)
         if r.status_code == 404:
             return False
         r.raise_for_status()
@@ -137,7 +162,7 @@ class GraphStorage:
         url = f"{self._item(folder)}/children?$select=name,size,lastModifiedDateTime,file&$top=999"
         out = []
         while url:
-            r = self.http.get(url, headers=self._headers(), timeout=60)
+            r = self._call("get", url, timeout=60)
             if r.status_code == 404:
                 # A wrong account or folder name must fail loudly, not look like "no new files"
                 self.drive_info()
@@ -155,28 +180,35 @@ class GraphStorage:
         return out
 
     def read(self, path: str) -> bytes | None:
-        r = self.http.get(f"{self._item(path)}/content", headers=self._headers(), timeout=300)
+        r = self._call("get", f"{self._item(path)}/content", timeout=300)
         if r.status_code == 404:
             return None
         r.raise_for_status()
         return r.content
 
     def download_to(self, path: str, local_path: str) -> None:
-        # Stream to disk: catalog exports are 100+ MB
-        with self.http.get(f"{self._item(path)}/content", headers=self._headers(), timeout=600, stream=True) as r:
-            r.raise_for_status()
-            with open(local_path, "wb") as fh:
-                for chunk in r.iter_content(chunk_size=1024 * 1024):
-                    fh.write(chunk)
+        # Stream to disk (exports are 60-130 MB); a connection dropped mid-file restarts it
+        for attempt in range(1, ATTEMPTS + 1):
+            try:
+                with self._call("get", f"{self._item(path)}/content", timeout=600, stream=True) as r:
+                    r.raise_for_status()
+                    with open(local_path, "wb") as fh:
+                        for chunk in r.iter_content(chunk_size=1024 * 1024):
+                            fh.write(chunk)
+                return
+            except RETRY_ERRORS:
+                if attempt == ATTEMPTS:
+                    raise
+                self._sleep(2 ** attempt)
 
     def write(self, path: str, data: bytes) -> None:
         # Uploading by path creates missing folders
         if len(data) <= SIMPLE_UPLOAD_MAX:
-            r = self.http.put(f"{self._item(path)}/content", headers=self._headers(), data=data, timeout=300)
+            r = self._call("put", f"{self._item(path)}/content", data=data, timeout=300)
             r.raise_for_status()
             return
-        r = self.http.post(
-            f"{self._item(path)}/createUploadSession", headers=self._headers(),
+        r = self._call(
+            "post", f"{self._item(path)}/createUploadSession",
             json={"item": {"@microsoft.graph.conflictBehavior": "replace"}}, timeout=60,
         )
         r.raise_for_status()
@@ -184,7 +216,7 @@ class GraphStorage:
         for start in range(0, total, CHUNK):
             end = min(start + CHUNK, total) - 1
             # The pre-authenticated upload URL must not get the Authorization header
-            r = self.http.put(upload_url, data=data[start:end + 1], timeout=300, headers={
+            r = self._call("put", upload_url, auth=False, data=data[start:end + 1], timeout=300, headers={
                 "Content-Length": str(end - start + 1),
                 "Content-Range": f"bytes {start}-{end}/{total}",
             })
