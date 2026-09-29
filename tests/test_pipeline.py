@@ -211,3 +211,15 @@ def test_backfill_reuses_the_day_just_computed(env, monkeypatch):
     assert job.run(backfill=3).catalogs == ["2026-04-01", "2026-04-02", "2026-04-03"]
     assert loads == []  # no snapshot downloaded: each previous day was still in memory
     assert job.store.load_manifest("2026-04-03")["sku_changes"] == {"new": 1, "removed": 1, "net": 0}
+
+
+def test_dotenv_fills_only_missing_variables(tmp_path, monkeypatch):
+    from pipeline.config import load_dotenv
+
+    (tmp_path / ".env").write_text("# comment\nGRAPH_DRIVE_USER=a@cemaco.com\nGRAPH_CLIENT_ID='abc'\n")
+    monkeypatch.delenv("GRAPH_DRIVE_USER", raising=False)
+    monkeypatch.setenv("GRAPH_CLIENT_ID", "already-set")
+    load_dotenv(str(tmp_path / ".env"))
+    import os
+    assert os.environ["GRAPH_DRIVE_USER"] == "a@cemaco.com"
+    assert os.environ["GRAPH_CLIENT_ID"] == "already-set"

@@ -10,6 +10,22 @@ from dataclasses import dataclass
 DEFAULT_SHEET_ID = "1jcL_nEsyMqpzssXFh-0IHpfWKDFtFhzlERzKjcdX69Y"
 
 
+def load_dotenv(path: str = ".env") -> None:
+    """
+    Local runs only: KEY=VALUE lines from a git-ignored .env fill variables that are
+    not already set. Render never has this file and uses its own environment.
+    """
+    if not os.path.isfile(path):
+        return
+    with open(path, encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+
+
 @dataclass
 class Settings:
     # "graph" = OneDrive via Microsoft Graph, "local" = a folder on disk (dev/tests)
@@ -35,6 +51,7 @@ class Settings:
 
     @classmethod
     def from_env(cls) -> "Settings":
+        load_dotenv()
         env = os.environ.get
         sa = env("GCP_SERVICE_ACCOUNT_JSON", "")
         return cls(
