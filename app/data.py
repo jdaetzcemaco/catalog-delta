@@ -59,7 +59,8 @@ def _productivity(day: str, team: str) -> pd.DataFrame | None:
 
 
 def productivity(day: str) -> ProductivityReport:
-    return build_productivity(_productivity(day, "diseno"), _productivity(day, "edicion"))
+    return build_productivity(_productivity(day, "diseno"), _productivity(day, "edicion"),
+                              _productivity(day, "ingresos"))
 
 
 @st.cache_data(ttl=TTL, show_spinner=False)

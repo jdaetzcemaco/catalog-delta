@@ -71,6 +71,8 @@ def productivity_sheets(
     catalog: pd.DataFrame | None = None,
 ) -> dict[str, pd.DataFrame]:
     sheets: dict[str, pd.DataFrame] = {}
+    if prod.ingresos is not None:
+        sheets["Ingresos STEP"] = prod.intake(catalog)
     if not prod.teams():
         return sheets
     sheets["SKUs por Usuario"] = prod.skus_by_user()

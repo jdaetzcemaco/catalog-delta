@@ -13,7 +13,7 @@ import os
 import re
 import tempfile
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Protocol
 
 import pandas as pd
@@ -33,7 +33,7 @@ except Exception:  # pragma: no cover - tzdata missing
     LOCAL_TZ = None
 
 DATE_RE = re.compile(r"(\d{4}-\d{2}-\d{2})")
-TEAMS = ("diseno", "edicion")
+TEAMS = ("diseno", "edicion", "ingresos")
 
 
 class History(Protocol):
@@ -45,12 +45,14 @@ class PassReport:
     catalogs: list[str] = field(default_factory=list)
     recomputed: list[str] = field(default_factory=list)
     productivity: list[str] = field(default_factory=list)
+    mail: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     skipped: bool = False
 
     @property
     def did_work(self) -> bool:
-        return bool(self.catalogs or self.recomputed or self.productivity)
+        return bool(self.catalogs or self.recomputed or self.productivity or self.mail)
 
 
 def file_day(f: FileInfo) -> str:
@@ -78,11 +80,13 @@ def is_new(entry: dict | None, f: FileInfo) -> bool:
 
 
 class Job:
-    def __init__(self, settings: Settings, storage: Storage, history: History | None = None):
+    def __init__(self, settings: Settings, storage: Storage, history: History | None = None,
+                 mailbox=None):
         self.settings = settings
         self.storage = storage
         self.store = ResultStore(storage, settings.processed_dir)
         self.history = history
+        self.mailbox = mailbox
         self.owner: str | None = None
         self._last: tuple[str, pd.DataFrame] | None = None
 
@@ -194,7 +198,7 @@ class Job:
     def run_productivity(self, report: PassReport) -> None:
         s = self.settings
         index = self.store.load_index()
-        patterns = {"diseno": s.diseno_pattern, "edicion": s.edicion_pattern}
+        patterns = {"diseno": s.diseno_pattern, "edicion": s.edicion_pattern, "ingresos": s.ingresos_pattern}
         for team in TEAMS:
             seen = index["productivity"].setdefault(team, {})
             for day, f in latest_per_day(self.storage.list(s.incoming_dir, patterns[team])).items():
@@ -211,6 +215,33 @@ class Job:
                     log.exception("Productivity %s (%s) failed", team, f.name)
                     report.errors.append(f"productivity {f.name}: {exc}")
 
+    # ── e-mail reports ──────────────────────────────────────────────────────
+    def run_mail(self, report: PassReport) -> None:
+        """Save new STEP report attachments to incoming/ (before productivity runs)."""
+        if self.mailbox is None:
+            return
+        from .mail import MailPermissionError, collect_reports
+
+        s = self.settings
+        index = self.store.load_index()
+        seen = index.setdefault("mail", {})
+        try:
+            report.mail = collect_reports(self.mailbox, self.storage, s.incoming_dir, seen,
+                                          s.mail_sender, s.mail_lookback_days)
+        except MailPermissionError as exc:
+            # Expected until IT grants the permission: keep the rest of the run going
+            log.warning("Mail: %s", exc)
+            report.warnings.append(str(exc))
+            return
+        except Exception as exc:
+            log.exception("Mail collection failed")
+            report.errors.append(f"mail: {exc}")
+            return
+        # Forget message ids well past the lookback window so the index stays small
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=2 * s.mail_lookback_days)).isoformat()
+        index["mail"] = {k: v for k, v in seen.items() if v.get("received", "") >= cutoff}
+        self.store.save_index(index)
+
     def run(self, backfill: int | None = None) -> PassReport:
         report = PassReport()
         owner = self.owner = f"{os.uname().nodename}:{os.getpid()}:{datetime.now().timestamp():.0f}"
@@ -220,6 +251,7 @@ class Job:
             return report
         try:
             self.run_catalogs(report, backfill)
+            self.run_mail(report)
             self.run_productivity(report)
         finally:
             self.store.release_lock(owner)

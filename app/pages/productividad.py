@@ -14,9 +14,9 @@ if not days:
 top = st.columns([1, 1, 2])
 pday = top[0].selectbox("Archivo de productividad", days, format_func=ui.fmt_day)
 p = data.productivity(pday)
-teams = [t for t, _ in p.teams()]
-top[2].caption(f"Equipos cargados: **{', '.join(teams)}**" +
-               ("" if p.both else " · sube ambos archivos para ver las comparaciones entre equipos"))
+teams = [t for t, _ in p.teams()] + (["Ingresos a STEP"] if p.ingresos is not None else [])
+top[2].caption(f"Reportes cargados: **{', '.join(teams) or 'ninguno'}**" +
+               ("" if p.both else " · faltan reportes de equipo para las comparaciones entre Diseño y Edición"))
 
 run_days = data.run_days()
 catalog_day = next((d for d in run_days if d <= pday), run_days[-1] if run_days else None)
@@ -30,8 +30,9 @@ if p.both:
     ui.kpi(c[2], "Ambos equipos", u["ambos"])
     ui.kpi(c[3], "Solo Edición", u["solo_edicion"])
 
-tab_a, tab_f, tab_d, tab_bc = st.tabs(["A · Por usuario", "F · Salieron del flujo",
-                                       "D · Con inventario omnicanal", "B/C · Entre equipos"])
+tab_a, tab_f, tab_d, tab_bc, tab_in = st.tabs(["A · Por usuario", "F · Salieron del flujo",
+                                               "D · Con inventario omnicanal", "B/C · Entre equipos",
+                                               "Ingresos a STEP"])
 
 with tab_a:
     by_user = p.skus_by_user()
@@ -82,3 +83,24 @@ with tab_bc:
         with b:
             st.caption(f"Solo Edición · {ui.n(u['solo_edicion'])} SKUs")
             ui.show_table(p.only_in_by_category("Edición"), key="prod_solo_e", filters=False)
+
+with tab_in:
+    if p.ingresos is None:
+        st.info("Aún no hay reporte de productos que ingresaron a STEP para este día.")
+    else:
+        intake = p.intake(info)
+        k = p.intake_kpis(intake)
+        st.caption("Productos creados en STEP en las últimas 24 h (reporte de las 7:00). Los IDs `catgo-…` "
+                   "son temporales: todavía no tienen SKU.")
+        c = st.columns(5)
+        ui.kpi(c[0], "Ingresaron", k["total"])
+        ui.kpi(c[1], "Ya tienen SKU", k["con_sku"])
+        ui.kpi(c[2], "Sin categoría", k["sin_categoria"])
+        ui.kpi(c[3], "Sin imagen", k["sin_imagen"])
+        ui.kpi(c[4], "Completitud promedio", k["completitud_promedio"] if k["completitud_promedio"] is not None else "—",
+               help="Completitud Mercadeo (Calculado), promedio del día")
+        if "en_catalogo" in k and catalog_day:
+            st.caption(f"De los que tienen SKU: **{k['en_catalogo']}** ya están en el catálogo del "
+                       f"{ui.fmt_day(catalog_day)}, **{k.get('visibles', 0)}** visibles.")
+        ui.show_table(intake.rename(columns={"<ID>": "SKU"}), key="prod_ingresos", info=info,
+                      download_name=f"ingresos_step_{pday}", empty="No ingresaron productos.")

@@ -223,3 +223,35 @@ def test_dotenv_fills_only_missing_variables(tmp_path, monkeypatch):
     import os
     assert os.environ["GRAPH_DRIVE_USER"] == "a@cemaco.com"
     assert os.environ["GRAPH_CLIENT_ID"] == "already-set"
+
+
+def test_job_collects_mail_then_processes_it_and_survives_missing_permission(env):
+    import pandas as pd
+    from pipeline.mail import MailPermissionError, Message
+
+    job, drop, history, sku = env
+    df = pd.DataFrame({"<ID>": ["catgo-1", "1230797"], "<Name>": ["A", "B"], "Categoría": [None, "X"],
+                       "Completitud Mercadeo (Calculado)": [12, 0], "Estado Imagen Primaria": ["Sin Imagen"] * 2,
+                       "Fecha de Creación STEP": ["2026-09-28"] * 2})
+
+    class Box:
+        def messages_since(self, since):
+            from datetime import datetime, timezone
+            return [Message("m1", "STEP - Reporte Diario Productos que Ingresaron al flujo de STEP",
+                            "noreply@cloudmail.stibo.com", datetime.now(timezone.utc))]
+
+        def xlsx_attachments(self, message_id):
+            return [("excel.xlsx", _xlsx(df, "Sheet1"))]
+
+    job.mailbox = Box()
+    r = job.run()
+    assert len(r.mail) == 1 and r.productivity == [f"ingresos {r.mail[0][22:32]}"]
+    assert job.store.load_productivity(r.mail[0][22:32], "ingresos")["<ID>"].tolist() == ["catgo-1", "1230797"]
+
+    class NoPermission:
+        def messages_since(self, since):
+            raise MailPermissionError("Mail.Read not granted")
+
+    job.mailbox = NoPermission()
+    r = job.run()
+    assert r.warnings and not r.errors

@@ -52,7 +52,11 @@ def main(argv: list[str] | None = None) -> int:
     except ValueError as exc:
         logging.error("%s. Set them in this terminal (see docs/PIPELINE.md) or pass --local ROOT.", exc)
         return 2
-    job = Job(settings, storage, history)
+    mailbox = None
+    if settings.mail_enabled and settings.storage == "graph":
+        from .mail import GraphMailbox
+        mailbox = GraphMailbox(storage, settings.mail_user or settings.graph_drive_user)
+    job = Job(settings, storage, history, mailbox)
     if args.recompute:
         index = job.store.load_index()
         if args.recompute not in index["catalog"]:
@@ -65,8 +69,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if report.skipped:
         return 0
-    logging.info("Done: catalogs=%s recomputed=%s productivity=%s errors=%s",
-                 report.catalogs, report.recomputed, report.productivity, len(report.errors))
+    logging.info("Done: catalogs=%s recomputed=%s mail=%s productivity=%s errors=%s",
+                 report.catalogs, report.recomputed, report.mail, report.productivity, len(report.errors))
     for err in report.errors:
         logging.error(err)
     return 1 if report.errors else 0

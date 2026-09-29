@@ -42,8 +42,16 @@ class Settings:
     catalog_pattern: str = "catalog-daily-*.xlsx"
     diseno_pattern: str = "productivity-diseno-*.xlsx"
     edicion_pattern: str = "productivity-edicion-*.xlsx"
+    ingresos_pattern: str = "productivity-ingresos-*.xlsx"
     # On an empty store, only the newest N catalog files are processed
     bootstrap_files: int = 2
+
+    # Read the STEP report e-mails (productivity, ingresos) straight from a mailbox.
+    # Needs the Graph Mail.Read application permission; without it the job only warns.
+    mail_enabled: bool = True
+    mail_user: str = ""            # defaults to graph_drive_user
+    mail_sender: str = "noreply@cloudmail.stibo.com"
+    mail_lookback_days: int = 7
 
     history_enabled: bool = True
     google_sheet_id: str = DEFAULT_SHEET_ID
@@ -66,6 +74,11 @@ class Settings:
             catalog_pattern=env("CATALOG_PATTERN", cls.catalog_pattern),
             diseno_pattern=env("DISENO_PATTERN", cls.diseno_pattern),
             edicion_pattern=env("EDICION_PATTERN", cls.edicion_pattern),
+            ingresos_pattern=env("INGRESOS_PATTERN", cls.ingresos_pattern),
+            mail_enabled=env("MAIL_ENABLED", "true").lower() in ("1", "true", "yes"),
+            mail_user=env("MAIL_USER", ""),
+            mail_sender=env("MAIL_SENDER", cls.mail_sender),
+            mail_lookback_days=int(env("MAIL_LOOKBACK_DAYS", str(cls.mail_lookback_days))),
             bootstrap_files=int(env("BOOTSTRAP_FILES", str(cls.bootstrap_files))),
             history_enabled=env("HISTORY_ENABLED", "true").lower() in ("1", "true", "yes"),
             google_sheet_id=env("GOOGLE_SHEET_ID", DEFAULT_SHEET_ID),

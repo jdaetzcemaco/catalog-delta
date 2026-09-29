@@ -17,6 +17,18 @@ OneDrive `cemaco-reports/incoming/` and exits; a pass with nothing new takes und
 3. If a day arrives late, the day after it is recomputed so its comparison is right.
 4. Stores the newest `productivity-diseno-*` / `productivity-edicion-*` per day under
    `productivity/<day>/`.
+4b. Reads the STEP report e-mails from the mailbox (`MAIL_USER`, default `GRAPH_DRIVE_USER`),
+   from `noreply@cloudmail.stibo.com`, last 7 days, and saves each attachment to `incoming/`:
+
+   | Subject contains | Saved as |
+   |---|---|
+   | Reporte de Productividad Diario Catálogo | `productivity-diseno-<day>.xlsx` |
+   | Reporte de Productividad Diario del flujo Imagenes y Atributos Compras | `productivity-edicion-<day>.xlsx` |
+   | Reporte Diario Productos que Ingresaron al flujo de STEP | `productivity-ingresos-<day>.xlsx` |
+
+   `<day>` is the date the mail arrived (Guatemala). Needs the Graph **Mail.Read**
+   application permission; until it is granted the job logs a warning and carries on.
+   Check with `python3 tools/check_mail.py`. Turn off with `MAIL_ENABLED=false`.
 5. On an empty store it starts from the newest `BOOTSTRAP_FILES` catalog files (2 by
    default, 30 on Render). After that it only considers days from the oldest processed
    day onward, so old exports in `incoming/` are never picked up by accident; use
@@ -42,8 +54,9 @@ v1 used SharePoint app-only "ACS" client secrets, which Microsoft retired in Apr
 The job uses Microsoft Graph instead:
 
 1. Entra ID → App registrations → New registration (single tenant).
-2. API permissions → Microsoft Graph → **Application** → `Files.ReadWrite.All`
-   → Grant admin consent. (Stricter option: `Sites.Selected`, then grant the app write
+2. API permissions → Microsoft Graph → **Application** → `Files.ReadWrite.All` and
+   `Mail.Read` → Grant admin consent. (`Mail.Read` covers every mailbox; IT can limit it to
+   one mailbox with an Exchange Application Access Policy.) (Stricter option: `Sites.Selected`, then grant the app write
    access to that one OneDrive site.)
 3. Certificates & secrets → New client secret. Give tenant ID, client ID and secret to
    whoever configures Render.

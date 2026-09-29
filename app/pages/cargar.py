@@ -18,8 +18,8 @@ except Exception:  # pragma: no cover
     TODAY = datetime.now().date()
 
 st.title("Cargar archivos")
-st.caption("Normalmente no hace falta: el export diario llega a OneDrive por correo y se procesa solo "
-           "(cada 30 minutos). Usa esto cuando el archivo no llegó o hay que reemplazarlo.")
+st.caption("Normalmente no hace falta: el catálogo llega a OneDrive y los reportes de productividad se leen "
+           "del correo; todo se procesa solo cada 30 minutos. Usa esto cuando un archivo no llegó o hay que reemplazarlo.")
 
 s = data.settings()
 storage = data.store().storage
@@ -32,6 +32,7 @@ KINDS = {
     "Catálogo diario (STEP)": ("catalog-daily-{day}.xlsx", "catalog_pattern"),
     "Productividad Diseño": ("productivity-diseno-{day}.xlsx", "diseno_pattern"),
     "Productividad Edición": ("productivity-edicion-{day}.xlsx", "edicion_pattern"),
+    "Ingresos a STEP": ("productivity-ingresos-{day}.xlsx", "ingresos_pattern"),
 }
 
 

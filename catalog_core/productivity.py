@@ -1,4 +1,7 @@
-"""Team productivity: what Diseño and Edición worked on and what left the workflow."""
+"""
+Team productivity: what Diseño and Edición worked on, what left the workflow, and
+what entered STEP (the daily "ingresos" report).
+"""
 
 from __future__ import annotations
 
@@ -12,12 +15,14 @@ from .text import yesno
 ID, NAME, CATEGORY, USER, OMNI = "<ID>", "<Name>", "Categoría", "Usuario", "Total Omnicanal"
 FLUJO_COL = "Fecha de Salida del Flujo de trabajo"
 PROMOTER_COL = {"Diseño": "Usuario Promueve desde Catalogo", "Edición": "Usuario Promueve desde Compras"}
+COMPLETITUD, IMAGEN, CREACION = "Completitud Mercadeo (Calculado)", "Estado Imagen Primaria", "Fecha de Creación STEP"
 
 
 @dataclass
 class ProductivityReport:
     diseno: pd.DataFrame | None
     edicion: pd.DataFrame | None
+    ingresos: pd.DataFrame | None = None
 
     @property
     def both(self) -> bool:
@@ -143,5 +148,42 @@ class ProductivityReport:
         }
 
 
-def build_productivity(diseno: pd.DataFrame | None, edicion: pd.DataFrame | None) -> ProductivityReport:
-    return ProductivityReport(diseno=diseno, edicion=edicion)
+    # ── Ingresos a STEP ─────────────────────────────────────────────────────
+    def intake(self, catalog: pd.DataFrame | None = None) -> pd.DataFrame:
+        """
+        Products that entered STEP, one row per <ID>. IDs like 'catgo-…' are temporary
+        (no SKU yet); numeric IDs are looked up in the catalog (En catálogo, VISIBLE).
+        """
+        if self.ingresos is None:
+            return pd.DataFrame(columns=[ID, NAME, CATEGORY, COMPLETITUD, IMAGEN, CREACION])
+        out = self.ingresos.drop_duplicates(ID).reset_index(drop=True)
+        out["Tiene SKU"] = out[ID].astype(str).str.fullmatch(r"\d+")
+        if catalog is not None:
+            skus = catalog[["SKU", "VISIBLE"]].drop_duplicates("SKU") if "VISIBLE" in catalog.columns \
+                else catalog[["SKU"]].drop_duplicates()
+            out = out.merge(skus, left_on=ID, right_on="SKU", how="left", indicator="_m").drop(columns=["SKU"])
+            out["En catálogo"] = out.pop("_m") == "both"
+        return out
+
+    @staticmethod
+    def intake_kpis(intake: pd.DataFrame) -> dict:
+        n = len(intake)
+        completitud = pd.to_numeric(intake.get(COMPLETITUD, pd.Series(dtype=float)), errors="coerce")
+        imagen = intake.get(IMAGEN, pd.Series(dtype=object)).astype(str).str.strip().str.lower()
+        kpis = {
+            "total": n,
+            "con_sku": int(intake.get("Tiene SKU", pd.Series(dtype=bool)).fillna(False).sum()),
+            "sin_categoria": int(intake.get(CATEGORY, pd.Series(dtype=object)).isna().sum()),
+            "sin_imagen": int((imagen == "sin imagen").sum()),
+            "completitud_promedio": round(float(completitud.mean()), 1) if n and completitud.notna().any() else None,
+        }
+        if "En catálogo" in intake.columns:
+            kpis["en_catalogo"] = int(intake["En catálogo"].sum())
+            if "VISIBLE" in intake.columns:
+                kpis["visibles"] = int((yesno(intake["VISIBLE"]) == 1).sum())
+        return kpis
+
+
+def build_productivity(diseno: pd.DataFrame | None, edicion: pd.DataFrame | None,
+                       ingresos: pd.DataFrame | None = None) -> ProductivityReport:
+    return ProductivityReport(diseno=diseno, edicion=edicion, ingresos=ingresos)

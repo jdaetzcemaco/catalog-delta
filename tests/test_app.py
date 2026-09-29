@@ -43,6 +43,10 @@ def store_root(tmp_path, make_sku, monkeypatch):
     (incoming / "productivity-diseno-2026-04-02.xlsx").write_bytes(_xlsx(prod, "Sheet1"))
     edicion = prod.rename(columns={"Usuario Promueve desde Catalogo": "Usuario Promueve desde Compras"})
     (incoming / "productivity-edicion-2026-04-02.xlsx").write_bytes(_xlsx(edicion, "Sheet1"))
+    ingresos = pd.DataFrame({"<ID>": ["catgo-1", "1"], "<Name>": ["X", "A"], "Categoría": [None, "X"],
+                             "Completitud Mercadeo (Calculado)": [12, 0], "Estado Imagen Primaria": ["Sin Imagen"] * 2,
+                             "Fecha de Creación STEP": ["2026-04-01"] * 2})
+    (incoming / "productivity-ingresos-2026-04-02.xlsx").write_bytes(_xlsx(ingresos, "Sheet1"))
     Job(Settings(storage="local", local_root=str(root)), LocalStorage(str(root))).run()
 
     monkeypatch.setenv("STORAGE", "local")
