@@ -99,6 +99,11 @@ def _column_config(df: pd.DataFrame) -> dict:
     return cfg
 
 
+@st.cache_data(show_spinner=False, max_entries=30)
+def _csv(df: pd.DataFrame) -> bytes:
+    return df.to_csv(index=False).encode("utf-8-sig")
+
+
 def show_table(df: pd.DataFrame | None, key: str, *, info: pd.DataFrame | None = None,
                download_name: str | None = None, empty: str = "Sin registros.",
                filters: bool = True, height: int | str = "auto") -> None:
@@ -131,9 +136,10 @@ def show_table(df: pd.DataFrame | None, key: str, *, info: pd.DataFrame | None =
     c1, c2 = st.columns([3, 1])
     c1.caption(f"{n(len(df))} filas")
     if download_name:
-        c2.download_button("Descargar CSV", df.to_csv(index=False).encode("utf-8-sig"),
-                           file_name=f"{download_name}.csv", mime="text/csv",
-                           key=f"{key}_dl", width="stretch")
+        # Cached: the same table keeps the same file id across reruns, and downloading
+        # does not rerun the page (a rerun mid-download is what logs "Missing file")
+        c2.download_button("Descargar CSV", _csv(df), file_name=f"{download_name}.csv", mime="text/csv",
+                           key=f"{key}_dl", width="stretch", on_click="ignore")
 
 
 def quality_banner(manifest: dict | None) -> None:
