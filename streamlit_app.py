@@ -14,7 +14,10 @@ import os
 
 import streamlit as st
 
-st.set_page_config(page_title="Catalog Delta · Cemaco", page_icon="📊", layout="wide")
+LOGO = "app/assets/logo_cemaco_blanco.png"      # casa verde + texto blanco, for the blue sidebar
+ICON = "app/assets/icono_casa.png"
+
+st.set_page_config(page_title="Catalog Delta · Cemaco", page_icon=ICON, layout="wide")
 
 from app import data, ui  # noqa: E402
 
@@ -60,6 +63,7 @@ def sidebar() -> None:
 
 
 login()
+st.logo(LOGO, size="large", icon_image=ICON)
 pages = {
     "Catálogo": [
         st.Page("app/pages/resumen.py", title="Resumen", icon="🏠", default=True),
