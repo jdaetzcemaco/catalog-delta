@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 import pandas as pd
 
 from catalog_core import CatalogRun
+from catalog_core.quality import quality_checks
 
 from .storage import FileInfo, Storage, _join
 
@@ -138,12 +139,17 @@ class ResultStore:
                 "net": int(run.sku_changes["net"]),
             },
             "inventory_kpis": run.inventory.kpis,
+            "quality": quality_checks(run.today_raw),
             "tables": tables,
             "row_counts": counts,
         }
         self.storage.write(self._p("runs", day, "manifest.json"),
                            json.dumps(manifest, indent=2, ensure_ascii=False).encode())
         return manifest
+
+    def save_manifest(self, day: str, manifest: dict) -> None:
+        self.storage.write(self._p("runs", day, "manifest.json"),
+                           json.dumps(manifest, indent=2, ensure_ascii=False).encode())
 
     def load_manifest(self, day: str) -> dict | None:
         raw = self.storage.read(self._p("runs", day, "manifest.json"))

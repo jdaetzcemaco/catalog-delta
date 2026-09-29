@@ -255,3 +255,19 @@ def test_job_collects_mail_then_processes_it_and_survives_missing_permission(env
     job.mailbox = NoPermission()
     r = job.run()
     assert r.warnings and not r.errors
+
+
+def test_quality_checks_are_stored_and_added_to_older_days(env):
+    job, drop, history, sku = env
+    drop("catalog-daily-2026-04-01.xlsx", [sku("1"), sku("2", STOCK="1000000"), sku("3", STOCK="1000100")])
+    job.run()
+    assert job.store.load_manifest("2026-04-01")["quality"] == {"stock_placeholder": 2, "stock_placeholder_pct": 66.67}
+
+    # A day stored before the checks existed gets them on the next pass, without recomputing rules
+    m = job.store.load_manifest("2026-04-01")
+    del m["quality"]
+    job.store.save_manifest("2026-04-01", m)
+    r = job.run()
+    assert r.upgraded == ["2026-04-01"] and not r.catalogs
+    assert job.store.load_manifest("2026-04-01")["quality"]["stock_placeholder"] == 2
+    assert job.run().upgraded == []

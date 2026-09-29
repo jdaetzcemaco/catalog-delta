@@ -15,6 +15,7 @@ if m["baseline"]:
     st.info("Este es el primer día procesado: no hay un día anterior con el cual comparar.")
     st.stop()
 
+ui.quality_banner(m)
 st.caption(f"{ui.fmt_day(day)} comparado con {ui.fmt_day(m['previous_day'])}. "
            "Solo cuentan SKUs que existen ambos días, excepto Nuevos y Eliminados.")
 

@@ -26,12 +26,15 @@ METRICS = {
     "Stock sin visibilidad": "inv:stock_no_visible",
     "Deshabilitados con stock": "inv:deshabilitados_stock",
     "Tipo C con inventario": "inv:tipo_c_stock",
+    "SKUs con STOCK 1,000,000": "quality:stock_placeholder",
 }
 chosen = st.multiselect("Métricas", list(METRICS), default=["Score promedio", "Visibles %", "Con imagen %"])
 
 
 def line(label: str) -> alt.Chart:
     col = METRICS[label]
+    if col not in hist.columns:
+        hist[col] = None
     return alt.Chart(hist).mark_line(point=True).encode(
         x=alt.X("Fecha:T", title=None, axis=alt.Axis(format="%d %b")),
         y=alt.Y(f"{col}:Q", title=label, scale=alt.Scale(zero=False)),

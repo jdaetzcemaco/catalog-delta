@@ -33,7 +33,8 @@ def store_root(tmp_path, make_sku, monkeypatch):
     (incoming / "catalog-daily-2026-04-01.xlsx").write_bytes(_xlsx(pd.DataFrame(
         [make_sku("1"), make_sku("2", **tipo_c), make_sku("3", VISIBLE="No")]), "SKUs"))
     (incoming / "catalog-daily-2026-04-02.xlsx").write_bytes(_xlsx(pd.DataFrame(
-        [make_sku("1", VISIBLE="No"), make_sku("2"), make_sku("4", **{"HABILITADO/DESHABILITADO": "Deshabilitado"})]),
+        [make_sku("1", VISIBLE="No"), make_sku("2", STOCK="1000000"),
+         make_sku("4", **{"HABILITADO/DESHABILITADO": "Deshabilitado"})]),
         "SKUs"))
     prod = pd.DataFrame({
         "<ID>": [1, 2], "<Name>": ["A", "B"], "Categoría": ["X", "Y"], "Usuario": ["ana", "beto"],
@@ -63,3 +64,10 @@ def test_page_renders_without_errors(store_root, page):
     at.switch_page(f"app/pages/{page}.py").run()
     assert not at.exception, [e.value for e in at.exception]
     assert at.title, "page rendered no title"
+
+
+def test_resumen_warns_about_placeholder_stock(store_root):
+    at = AppTest.from_file(os.path.join(ROOT, "streamlit_app.py"), default_timeout=60)
+    at.session_state["authenticated"] = True
+    at.run()
+    assert any("STOCK = 1,000,000" in w.value for w in at.warning)

@@ -136,6 +136,22 @@ def show_table(df: pd.DataFrame | None, key: str, *, info: pd.DataFrame | None =
                            key=f"{key}_dl", width="stretch")
 
 
+def quality_banner(manifest: dict | None) -> None:
+    """Warn when the export carries values that make stock numbers unreliable."""
+    q = (manifest or {}).get("quality") or {}
+    n_placeholder = q.get("stock_placeholder", 0)
+    if not n_placeholder:
+        return
+    st.warning(
+        f"**Stock no confiable en este export:** {n(n_placeholder)} SKUs ({q.get('stock_placeholder_pct', 0)}%) "
+        "traen **STOCK = 1,000,000** o más, un valor que no es inventario real (aparece en el export de STEP "
+        "desde el 22 sep 2026 y está en revisión con el equipo de STEP). Mientras tanto, *Con stock*, "
+        "*Stock flips*, *Stock sin visibilidad*, *Deshabilitados con stock*, *Tipo C con inventario* y "
+        "*Prioridades* están inflados.",
+        icon="⚠️",
+    )
+
+
 def no_data() -> None:
     st.info("Aún no hay resultados procesados. Sube un catálogo en **Cargar archivos** "
             "o espera a que llegue el export diario.", icon="⏳")

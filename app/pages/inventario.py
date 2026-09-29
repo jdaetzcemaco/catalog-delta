@@ -14,6 +14,7 @@ day = st.session_state.day
 m = data.manifest(day)
 k = m["inventory_kpis"]
 info = data.sku_info(day)
+ui.quality_banner(m)
 st.caption("SKUs con inventario que no llega a la tienda en línea. Los productos no físicos "
            f"(Mesa de Regalos, Certificados de Regalo: {ui.n(k['no_fisicos'])}) se excluyen de todas las acciones.")
 

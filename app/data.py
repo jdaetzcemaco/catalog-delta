@@ -71,7 +71,8 @@ def history() -> pd.DataFrame:
         m = manifest(day)
         if m:
             rows.append({"Fecha": pd.Timestamp(day), **m["summary"],
-                         **{f"inv:{k}": v for k, v in m["inventory_kpis"].items()}})
+                         **{f"inv:{k}": v for k, v in m["inventory_kpis"].items()},
+                         **{f"quality:{k}": v for k, v in (m.get("quality") or {}).items()}})
     return pd.DataFrame(rows)
 
 

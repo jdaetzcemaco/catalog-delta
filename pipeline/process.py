@@ -46,6 +46,7 @@ class PassReport:
     recomputed: list[str] = field(default_factory=list)
     productivity: list[str] = field(default_factory=list)
     mail: list[str] = field(default_factory=list)
+    upgraded: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     skipped: bool = False
@@ -215,6 +216,29 @@ class Job:
                     log.exception("Productivity %s (%s) failed", team, f.name)
                     report.errors.append(f"productivity {f.name}: {exc}")
 
+    # ── upgrades of stored days ────────────────────────────────────────────
+    def add_missing_quality(self, report: PassReport) -> None:
+        """
+        Days stored before the data-quality checks existed get them once, from the
+        snapshot's STOCK column; no rule is recomputed.
+        """
+        from catalog_core.quality import quality_checks
+
+        for day in sorted(self.store.load_index()["catalog"]):
+            m = self.store.load_manifest(day)
+            if m is None or "quality" in m:
+                continue
+            try:
+                snap = self.store.load_snapshot(day, columns=["SKU", "STOCK"])
+                m["quality"] = quality_checks(snap)
+                self.store.save_manifest(day, m)
+                report.upgraded.append(day)
+                log.info("Quality checks added to %s: %s", day, m["quality"])
+            except Exception as exc:
+                log.exception("Quality checks for %s failed", day)
+                report.errors.append(f"quality {day}: {exc}")
+            self._renew_lock()
+
     # ── e-mail reports ──────────────────────────────────────────────────────
     def run_mail(self, report: PassReport) -> None:
         """Save new STEP report attachments to incoming/ (before productivity runs)."""
@@ -251,6 +275,7 @@ class Job:
             return report
         try:
             self.run_catalogs(report, backfill)
+            self.add_missing_quality(report)
             self.run_mail(report)
             self.run_productivity(report)
         finally:

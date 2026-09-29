@@ -31,6 +31,7 @@ def trend(key):
 
 st.title("Resumen del catálogo")
 st.caption(f"Catálogo del **{ui.fmt_day(day)}** · archivo `{m['source']['source']}`")
+ui.quality_banner(m)
 
 st.subheader("Salud del catálogo")
 r1 = st.columns(4)
