@@ -6,15 +6,34 @@ headless = true
 [browser]
 gatherUsageStats = false
 
+# Cemaco brand (Manual Cemaco, "Uso de color"): Azul zafiro #101E8E, Verde manzana
+# #94D500, Blanco; secondary Gris de textos (negro 80%). Chalet is the brand typeface but
+# is licensed; Outfit is a free geometric stand-in until the font files are available.
 [theme]
 base = "light"
-primaryColor = "#C8102E"
+primaryColor = "#101E8E"
 backgroundColor = "#FFFFFF"
-secondaryBackgroundColor = "#F5F6F8"
-textColor = "#1F2430"
-font = "sans serif"
+secondaryBackgroundColor = "#F3F4FA"
+textColor = "#333333"
+linkColor = "#101E8E"
+blueColor = "#101E8E"
+greenColor = "#94D500"
+# Verde manzana is too light for text on white; a darker shade keeps +deltas legible
+greenTextColor = "#4E7300"
+borderColor = "#D2D3EA"
+dataframeHeaderBackgroundColor = "#EEF0F8"
+chartCategoricalColors = ["#101E8E", "#94D500", "#6D6E71", "#7C84C7", "#BBFF00", "#2E3BA6"]
+font = "Outfit:https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap, sans-serif"
+headingFont = "Outfit:https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap, sans-serif"
+headingFontWeights = [700, 600, 600, 600, 600, 600]
 baseRadius = "0.6rem"
 showWidgetBorder = true
 
+# Blue sidebar with white text and the green as accent (logo rule: casa verde, texto blanco)
 [theme.sidebar]
-backgroundColor = "#F5F6F8"
+backgroundColor = "#101E8E"
+secondaryBackgroundColor = "#1B2A9E"
+textColor = "#FFFFFF"
+primaryColor = "#94D500"
+borderColor = "#3342B0"
+linkColor = "#94D500"
