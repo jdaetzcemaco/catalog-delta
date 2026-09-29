@@ -291,3 +291,26 @@ def test_mislabelled_productivity_file_is_ignored_and_forgotten(env):
     assert "2026-09-28" not in job.store.load_index()["productivity"]["diseno"]
     # Warned once, not on every run
     assert not job.run().warnings
+
+
+def test_audit_removes_stored_day_of_the_wrong_team_even_if_file_unchanged(env):
+    import pandas as pd
+
+    job, drop, history, sku = env
+    edicion_cols = pd.DataFrame({"<ID>": [1], "<Name>": ["A"], "Usuario": ["dani"],
+                                 "Usuario Promueve desde Compras": ["eva"], "Total Omnicanal": [1],
+                                 "Fecha de Salida del Flujo de trabajo": ["2026-09-28"]})
+    # What the old version did: an Edición workbook stored as Diseño, file untouched since
+    drop("productivity-diseno-2026-09-28.xlsx", edicion_cols, sheet="Sheet1")
+    f = job.storage.list("cemaco-reports/incoming", "productivity-diseno-*")[0]
+    index = job.store.load_index()
+    index["productivity"]["diseno"] = {"2026-09-28": job.store.source_entry(f)}
+    job.store.save_index(index)
+    job.store.save_productivity("2026-09-28", "diseno", edicion_cols)
+
+    r = job.run()
+    assert r.warnings and not r.errors and r.productivity == []
+    assert "2026-09-28" not in job.store.load_index()["productivity"]["diseno"]
+    # Stays out, and is not warned about again
+    r = job.run()
+    assert not r.warnings and "2026-09-28" not in job.store.load_index()["productivity"]["diseno"]

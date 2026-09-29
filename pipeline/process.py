@@ -223,7 +223,7 @@ class Job:
                         self.store.save_index(index)
                         continue
                     self.store.save_productivity(day, team, df)
-                    seen[day] = ResultStore.source_entry(f)
+                    seen[day] = {**ResultStore.source_entry(f), "verified": detected == team}
                     self.store.save_index(index)
                     report.productivity.append(f"{team} {day}")
                     log.info("Productivity %s %s: %s rows", team, day, len(df))
@@ -253,6 +253,35 @@ class Job:
                 log.exception("Quality checks for %s failed", day)
                 report.errors.append(f"quality {day}: {exc}")
             self._renew_lock()
+
+    def audit_productivity(self, report: PassReport) -> None:
+        """
+        Check every stored productivity day once against its columns. Catches copies
+        stored under the wrong team before files were classified by content, which the
+        normal pass never re-reads because the file itself did not change.
+        """
+        index = self.store.load_index()
+        rejected = index.setdefault("productivity_rejected", {})
+        changed = False
+        for team in TEAMS:
+            entries = index["productivity"].get(team, {})
+            for day in sorted(entries):
+                entry = entries[day]
+                if entry.get("verified"):
+                    continue
+                df = self.store.load_productivity(day, team)
+                detected = detect_report(df.columns) if df is not None else None
+                if detected and detected != team:
+                    msg = f"stored {team} {day} ({entry.get('source')}) is a {detected} report; removed from {team}"
+                    log.warning("Productivity: %s", msg)
+                    report.warnings.append(msg)
+                    rejected[entry.get("source", "")] = entry.get("modified", "")
+                    del entries[day]
+                else:
+                    entry["verified"] = True
+                changed = True
+        if changed:
+            self.store.save_index(index)
 
     # ── e-mail reports ──────────────────────────────────────────────────────
     def run_mail(self, report: PassReport) -> None:
@@ -296,6 +325,7 @@ class Job:
             self.add_missing_quality(report)
             self.run_mail(report)
             self.run_productivity(report)
+            self.audit_productivity(report)
         finally:
             self.store.release_lock(owner)
         return report
