@@ -184,6 +184,21 @@ class ProductivityReport:
         return kpis
 
 
+def detect_report(columns) -> str | None:
+    """
+    Which STEP report a workbook is, from its columns (the e-mail subject is not
+    reliable enough): Diseño promotes from Catálogo, Edición promotes from Compras.
+    """
+    cols = {str(c).strip() for c in columns}
+    if PROMOTER_COL["Diseño"] in cols:
+        return "diseno"
+    if PROMOTER_COL["Edición"] in cols:
+        return "edicion"
+    if COMPLETITUD in cols and IMAGEN in cols:
+        return "ingresos"
+    return None
+
+
 def build_productivity(diseno: pd.DataFrame | None, edicion: pd.DataFrame | None,
                        ingresos: pd.DataFrame | None = None) -> ProductivityReport:
     return ProductivityReport(diseno=diseno, edicion=edicion, ingresos=ingresos)

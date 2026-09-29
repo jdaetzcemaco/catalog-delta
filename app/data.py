@@ -55,6 +55,9 @@ def sku_info(day: str) -> pd.DataFrame | None:
 
 @st.cache_data(ttl=TTL, show_spinner=False)
 def _productivity(day: str, team: str) -> pd.DataFrame | None:
+    # The index is the source of truth: a day the job rejected has no entry
+    if day not in index()["productivity"].get(team, {}):
+        return None
     return store().load_productivity(day, team)
 
 

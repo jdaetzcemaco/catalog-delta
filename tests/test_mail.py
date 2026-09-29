@@ -28,10 +28,10 @@ class FakeMailbox:
 
 
 @pytest.mark.parametrize("subject,kind", [
-    ("[STEP] Reporte de Productividad Diario Catálogo", "diseno"),
-    ("[STEP] Reporte de Productividad Diario del flujo Imagenes y Atributos Compras", "edicion"),
+    ("[STEP] Reporte de Productividad Diario Catálogo", "edicion"),
+    ("[STEP] Reporte de Productividad Diario del flujo Imagenes y Atributos Compras", "diseno"),
     ("STEP - Reporte Diario Productos que Ingresaron al flujo de STEP", "ingresos"),
-    ("RE: [STEP] reporte de productividad diario CATALOGO", "diseno"),
+    ("RE: [STEP] reporte de productividad diario CATALOGO", "edicion"),
     ("[STEP] Otro reporte", None),
 ])
 def test_subject_identifies_report(subject, kind):
@@ -56,7 +56,9 @@ def test_saves_each_report_under_its_own_name_once(tmp_path):
     saved = collect_reports(box, storage, "incoming", seen, SENDER, 7, now=NOW)
     assert sorted(saved) == ["productivity-diseno-2026-09-29.xlsx", "productivity-edicion-2026-09-29.xlsx",
                              "productivity-ingresos-2026-09-29.xlsx"]
-    assert storage.read("incoming/productivity-edicion-2026-09-29.xlsx") == b"data-m2"
+    # "Catálogo" is the Edición report, "Imagenes y Atributos Compras" the Diseño one
+    assert storage.read("incoming/productivity-edicion-2026-09-29.xlsx") == b"data-m1"
+    assert storage.read("incoming/productivity-diseno-2026-09-29.xlsx") == b"data-m2"
     # Other senders and subjects are ignored; a second pass downloads nothing
     downloads = box.downloads
     assert collect_reports(box, storage, "incoming", seen, SENDER, 7, now=NOW) == []
@@ -70,6 +72,20 @@ def test_day_is_the_guatemala_date_the_mail_arrived(tmp_path):
     box = FakeMailbox([msg], {"late": [("excel.xlsx", b"x")]})
     saved = collect_reports(box, LocalStorage(str(tmp_path)), "incoming", {}, SENDER, 7,
                             now=datetime(2026, 9, 30, 4, tzinfo=timezone.utc))
+    assert saved == ["productivity-edicion-2026-09-29.xlsx"]
+
+
+def test_columns_decide_over_the_subject(tmp_path):
+    import io
+
+    import pandas as pd
+
+    buf = io.BytesIO()
+    pd.DataFrame({"<ID>": [1], "Usuario Promueve desde Catalogo": ["ana"]}).to_excel(buf, index=False)
+    # Subject says Catálogo (Edición) but the workbook is a Diseño report
+    msg = Message("x", "[STEP] Reporte de Productividad Diario Catálogo", SENDER, at(13))
+    box = FakeMailbox([msg], {"x": [("excel.xlsx", buf.getvalue())]})
+    saved = collect_reports(box, LocalStorage(str(tmp_path)), "incoming", {}, SENDER, 7, now=NOW)
     assert saved == ["productivity-diseno-2026-09-29.xlsx"]
 
 

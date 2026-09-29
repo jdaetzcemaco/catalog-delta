@@ -33,11 +33,15 @@ class MailReport:
     subject: str    # distinctive part of the subject (accents and case ignored)
 
 
+# The subject only picks the candidate; the workbook's columns decide (detect_report).
+# "Catálogo" flow = Edición (promotes from Compras); "Imagenes y Atributos Compras" = Diseño.
 REPORTS = [
-    MailReport("diseno", "reporte de productividad diario catalogo"),
-    MailReport("edicion", "reporte de productividad diario del flujo imagenes y atributos compras"),
+    MailReport("edicion", "reporte de productividad diario catalogo"),
+    MailReport("diseno", "reporte de productividad diario del flujo imagenes y atributos compras"),
     MailReport("ingresos", "reporte diario productos que ingresaron al flujo de step"),
 ]
+# Bump when the naming rules change so already-seen e-mails are collected again
+MAIL_VERSION = 2
 
 
 def _norm(text: str) -> str:
@@ -110,6 +114,19 @@ class GraphMailbox:
         return out
 
 
+def _kind_from_content(data: bytes) -> str | None:
+    import io
+
+    import pandas as pd
+
+    from catalog_core.productivity import detect_report
+
+    try:
+        return detect_report(pd.read_excel(io.BytesIO(data), engine="calamine", nrows=0).columns)
+    except Exception:
+        return None
+
+
 def collect_reports(mailbox: Mailbox, storage: Storage, incoming_dir: str, seen: dict,
                     sender: str, lookback_days: int, now: datetime | None = None) -> list[str]:
     """
@@ -126,9 +143,13 @@ def collect_reports(mailbox: Mailbox, storage: Storage, incoming_dir: str, seen:
         if not files:
             continue
         day = m.received.astimezone(LOCAL_TZ).strftime("%Y-%m-%d")
-        name = f"productivity-{report.kind}-{day}.xlsx"
         # One workbook per report; if a mail carried several, keep the largest
         _, data = max(files, key=lambda f: len(f[1]))
+        kind = _kind_from_content(data) or report.kind
+        if kind != report.kind:
+            log.warning("Mail: '%s' contains a %s report (by its columns), saving it as %s",
+                        m.subject[:60], kind, kind)
+        name = f"productivity-{kind}-{day}.xlsx"
         storage.write(_join(incoming_dir, name), data)
         seen[m.id] = {"file": name, "subject": m.subject, "received": m.received.isoformat()}
         saved.append(name)

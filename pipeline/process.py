@@ -19,6 +19,7 @@ from typing import Protocol
 import pandas as pd
 
 from catalog_core import load_catalog, load_productivity, run_catalog
+from catalog_core.productivity import detect_report
 
 from .config import Settings
 from .storage import FileInfo, Storage
@@ -205,8 +206,22 @@ class Job:
             for day, f in latest_per_day(self.storage.list(s.incoming_dir, patterns[team])).items():
                 if not is_new(seen.get(day), f):
                     continue
+                rejected = index.setdefault("productivity_rejected", {})
+                if rejected.get(f.name) == f.modified.isoformat():
+                    continue
                 try:
                     df = load_productivity(self.storage.read(f.path))
+                    detected = detect_report(df.columns)
+                    if detected and detected != team:
+                        # Wrong name for its content (e.g. an older mis-labelled copy): never
+                        # show it as this team; drop what was stored for that day
+                        msg = f"{f.name} is a {detected} report by its columns; ignored as {team}"
+                        log.warning("Productivity: %s", msg)
+                        report.warnings.append(msg)
+                        rejected[f.name] = f.modified.isoformat()
+                        seen.pop(day, None)
+                        self.store.save_index(index)
+                        continue
                     self.store.save_productivity(day, team, df)
                     seen[day] = ResultStore.source_entry(f)
                     self.store.save_index(index)
@@ -244,10 +259,13 @@ class Job:
         """Save new STEP report attachments to incoming/ (before productivity runs)."""
         if self.mailbox is None:
             return
-        from .mail import MailPermissionError, collect_reports
+        from .mail import MAIL_VERSION, MailPermissionError, collect_reports
 
         s = self.settings
         index = self.store.load_index()
+        if index.get("mail_version") != MAIL_VERSION:
+            index["mail"] = {}
+            index["mail_version"] = MAIL_VERSION
         seen = index.setdefault("mail", {})
         try:
             report.mail = collect_reports(self.mailbox, self.storage, s.incoming_dir, seen,

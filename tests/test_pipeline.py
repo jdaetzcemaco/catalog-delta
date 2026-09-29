@@ -271,3 +271,23 @@ def test_quality_checks_are_stored_and_added_to_older_days(env):
     assert r.upgraded == ["2026-04-01"] and not r.catalogs
     assert job.store.load_manifest("2026-04-01")["quality"]["stock_placeholder"] == 2
     assert job.run().upgraded == []
+
+
+def test_mislabelled_productivity_file_is_ignored_and_forgotten(env):
+    import pandas as pd
+
+    job, drop, history, sku = env
+    edicion_cols = pd.DataFrame({"<ID>": [1], "<Name>": ["A"], "Usuario": ["dani"],
+                                 "Usuario Promueve desde Compras": ["eva"], "Total Omnicanal": [1],
+                                 "Fecha de Salida del Flujo de trabajo": ["2026-09-28"]})
+    diseno_cols = edicion_cols.rename(columns={"Usuario Promueve desde Compras": "Usuario Promueve desde Catalogo"})
+    drop("productivity-diseno-2026-09-28.xlsx", diseno_cols, sheet="Sheet1")
+    assert job.run().productivity == ["diseno 2026-09-28"]
+
+    # The same name now holds an Edición workbook (the old mis-labelling): rejected, entry dropped
+    drop("productivity-diseno-2026-09-28.xlsx", edicion_cols, sheet="Sheet1")
+    r = job.run()
+    assert r.productivity == [] and r.warnings and not r.errors
+    assert "2026-09-28" not in job.store.load_index()["productivity"]["diseno"]
+    # Warned once, not on every run
+    assert not job.run().warnings
