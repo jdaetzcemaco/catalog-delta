@@ -54,6 +54,7 @@ class PassReport:
     upgraded: list[str] = field(default_factory=list)
     lists: list[str] = field(default_factory=list)
     alerts: int | None = None
+    ga4: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     skipped: bool = False
@@ -89,12 +90,13 @@ def is_new(entry: dict | None, f: FileInfo) -> bool:
 
 class Job:
     def __init__(self, settings: Settings, storage: Storage, history: History | None = None,
-                 mailbox=None):
+                 mailbox=None, ga4=None):
         self.settings = settings
         self.storage = storage
         self.store = ResultStore(storage, settings.processed_dir)
         self.history = history
         self.mailbox = mailbox
+        self.ga4 = ga4
         self.owner: str | None = None
         self._last: tuple[str, pd.DataFrame] | None = None
 
@@ -410,6 +412,66 @@ class Job:
                 report.errors.append(f"list status {lid}: {exc}")
             self._renew_lock()
 
+    # ── GA4 ─────────────────────────────────────────────────────────────────
+    GA4_MAX_DAYS_PER_PASS = 30
+
+    def run_ga4(self, report: PassReport) -> None:
+        """
+        Pull the GA4 item and landing reports for days not stored yet (newest first, up
+        to a cap per pass so a backfill spreads over a few runs) and always re-pull the
+        last `ga4_refresh_days`, then refresh the per-SKU rolling aggregates.
+        """
+        if self.ga4 is None:
+            return
+        from catalog_core.performance import daily_sku_frame, rolling_aggregates
+
+        s = self.settings
+        index = self.store.load_index()
+        meta = index["ga4"]
+        stored = set(meta.get("days", []))
+        today = datetime.now(LOCAL_TZ).date() if LOCAL_TZ else datetime.now().date()
+        yesterday = today - timedelta(days=1)
+        wanted = [(yesterday - timedelta(days=i)).isoformat() for i in range(s.ga4_backfill_days)]
+        refresh = set(wanted[:s.ga4_refresh_days])
+        todo = [d for d in wanted if d in refresh or d not in stored][:self.GA4_MAX_DAYS_PER_PASS]
+        if not todo:
+            return
+        daily = self.store.load_ga4_daily()
+        new_items, new_landing = {}, {}
+        for day in todo:
+            try:
+                items = self.ga4.items_report(day)
+                landing = self.ga4.landing_report(day)
+                self.store.save_ga4_day(day, items, landing)
+                new_items[day], new_landing[day] = items, landing
+                stored.add(day)
+                report.ga4.append(day)
+                log.info("GA4 %s: %s item rows, %s landing rows, quota left %s", day, len(items), len(landing),
+                         items.attrs.get("quota_tokens_remaining"))
+            except Exception as exc:
+                log.exception("GA4 %s failed", day)
+                report.errors.append(f"ga4 {day}: {exc}")
+                break  # quota or auth problems: stop for this pass, try again next run
+            self._renew_lock()
+        if not new_items:
+            return
+        fresh = daily_sku_frame(new_items, new_landing)
+        if daily is not None and not daily.empty:
+            daily["day"] = pd.to_datetime(daily["day"])
+            daily = pd.concat([daily[~daily["day"].isin(fresh["day"].unique())], fresh], ignore_index=True)
+        else:
+            daily = fresh
+        cutoff = pd.Timestamp(yesterday) - pd.Timedelta(days=s.ga4_backfill_days + 30)
+        daily = daily[daily["day"] >= cutoff]
+        self.store.save_ga4_daily(daily)
+        perf = rolling_aggregates(daily, yesterday.isoformat())
+        self.store.save_perf(perf)
+        meta["days"] = sorted(stored)
+        meta["as_of"] = yesterday.isoformat()
+        meta["skus_with_data_90d"] = int(len(perf))
+        self.store.save_index(index)
+        log.info("GA4 aggregates as of %s: %s SKUs", yesterday, f"{len(perf):,}")
+
     # ── alerts ──────────────────────────────────────────────────────────────
     def run_alerts(self, report: PassReport) -> None:
         """
@@ -503,6 +565,7 @@ class Job:
             self.run_productivity(report)
             self.audit_productivity(report)
             self.update_sku_history(report)
+            self.run_ga4(report)
             self.run_campaigns(report)
             self.run_alerts(report)
         finally:

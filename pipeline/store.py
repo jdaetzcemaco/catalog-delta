@@ -71,6 +71,7 @@ class ResultStore:
         index.setdefault("lists", {})
         index.setdefault("sku_history", {})
         index.setdefault("alerts", {})
+        index.setdefault("ga4", {})
         return index
 
     def save_index(self, index: dict) -> None:
@@ -227,3 +228,28 @@ class ResultStore:
     def save_acks(self, acks: dict) -> None:
         # The only processed/ file the app writes: user actions, never touched by the job
         self.storage.write(self._p("alerts", "ack.json"), json.dumps(acks, indent=2, ensure_ascii=False).encode())
+
+    # ── GA4 ─────────────────────────────────────────────────────────────────
+    def save_ga4_day(self, day: str, items: pd.DataFrame, landing: pd.DataFrame) -> None:
+        self.storage.write(self._p("ga4", day, "items.parquet"), to_parquet_bytes(items))
+        self.storage.write(self._p("ga4", day, "landing.parquet"), to_parquet_bytes(landing))
+
+    def load_ga4_day(self, day: str, kind: str = "items") -> pd.DataFrame | None:
+        data = self.storage.read(self._p("ga4", day, f"{kind}.parquet"))
+        return None if data is None else from_parquet_bytes(data)
+
+    def save_perf(self, df: pd.DataFrame) -> None:
+        """Rolling per-SKU performance aggregates (7/30/90 days); the only GA4 file the app reads."""
+        self.storage.write(self._p("perf", "sku_perf.parquet"), to_parquet_bytes(df))
+
+    def load_perf(self) -> pd.DataFrame | None:
+        data = self.storage.read(self._p("perf", "sku_perf.parquet"))
+        return None if data is None else from_parquet_bytes(data)
+
+    def save_ga4_daily(self, df: pd.DataFrame) -> None:
+        """Per (day, SKU) rows for the aggregation window, kept so a pass reads one file, not 90."""
+        self.storage.write(self._p("ga4", "daily_sku.parquet"), to_parquet_bytes(df))
+
+    def load_ga4_daily(self) -> pd.DataFrame | None:
+        data = self.storage.read(self._p("ga4", "daily_sku.parquet"))
+        return None if data is None else from_parquet_bytes(data)

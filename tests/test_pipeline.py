@@ -390,3 +390,37 @@ def test_alert_thresholds_from_env(monkeypatch):
 
     monkeypatch.setenv("ALERT_LIST_MIN_READY_PCT", "95")
     assert Settings.from_env().alert_thresholds["list_min_ready_pct"] == 95.0
+
+
+def test_ga4_pass_backfills_in_chunks_and_refreshes_recent_days(env, monkeypatch):
+    from datetime import date, timedelta
+
+    job, drop, history, sku = env
+    job.settings.ga4_backfill_days = 40
+    job.settings.ga4_refresh_days = 2
+
+    class FakeGA4:
+        calls = []
+
+        def items_report(self, day):
+            self.calls.append(day)
+            return pd.DataFrame({"day": [day], "itemId": ["1"], "itemName": ["A"], "itemsViewed": [3],
+                                 "itemsAddedToCart": [1], "itemsPurchased": [0], "itemRevenue": [0.0]})
+
+        def landing_report(self, day):
+            return pd.DataFrame(columns=["day", "landingPagePlusQueryString", "sessionDefaultChannelGroup",
+                                         "sessions", "engagedSessions", "SKU"])
+
+    job.ga4 = FakeGA4()
+    r = job.run()
+    assert len(r.ga4) == 30  # capped per pass
+    yesterday = (date.today() - timedelta(days=1)).isoformat()
+    assert r.ga4[0] == yesterday
+    r2 = job.run()
+    # remaining 10 days + the 2 refreshed recent days
+    assert len(r2.ga4) == 12 and yesterday in r2.ga4
+    perf = job.store.load_perf().set_index("SKU")
+    assert perf.loc["1", "vistas_30d"] == 3 * 30 and perf.loc["1", "vistas_7d"] == 3 * 7
+    assert job.store.load_index()["ga4"]["as_of"] == yesterday
+    # Nothing left but the refresh window
+    assert len(job.run().ga4) == 2
