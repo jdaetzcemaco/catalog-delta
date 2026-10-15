@@ -70,6 +70,7 @@ class ResultStore:
         index.setdefault("productivity", {})
         index.setdefault("lists", {})
         index.setdefault("sku_history", {})
+        index.setdefault("alerts", {})
         return index
 
     def save_index(self, index: dict) -> None:
@@ -210,3 +211,19 @@ class ResultStore:
     def load_workflow_dates(self) -> pd.DataFrame | None:
         data = self.storage.read(self._p("sku_history", "workflow.parquet"))
         return None if data is None else from_parquet_bytes(data)
+
+    # ── alerts ──────────────────────────────────────────────────────────────
+    def save_alerts(self, day: str, payload: dict) -> None:
+        self.storage.write(self._p("alerts", f"{day}.json"), json.dumps(payload, indent=2, ensure_ascii=False).encode())
+
+    def load_alerts(self, day: str) -> dict | None:
+        raw = self.storage.read(self._p("alerts", f"{day}.json"))
+        return json.loads(raw) if raw else None
+
+    def load_acks(self) -> dict:
+        raw = self.storage.read(self._p("alerts", "ack.json"))
+        return json.loads(raw) if raw else {}
+
+    def save_acks(self, acks: dict) -> None:
+        # The only processed/ file the app writes: user actions, never touched by the job
+        self.storage.write(self._p("alerts", "ack.json"), json.dumps(acks, indent=2, ensure_ascii=False).encode())

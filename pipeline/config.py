@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 # v1 history sheet
 DEFAULT_SHEET_ID = "1jcL_nEsyMqpzssXFh-0IHpfWKDFtFhzlERzKjcdX69Y"
@@ -59,6 +59,9 @@ class Settings:
     google_sheet_id: str = DEFAULT_SHEET_ID
     google_service_account: dict | None = None
 
+    # Alert thresholds (catalog_core.alerts.AlertThresholds), overridable as ALERT_<FIELD>
+    alert_thresholds: dict = field(default_factory=dict)
+
     @classmethod
     def from_env(cls) -> "Settings":
         load_dotenv()
@@ -86,4 +89,6 @@ class Settings:
             history_enabled=env("HISTORY_ENABLED", "true").lower() in ("1", "true", "yes"),
             google_sheet_id=env("GOOGLE_SHEET_ID", DEFAULT_SHEET_ID),
             google_service_account=json.loads(sa) if sa else None,
+            alert_thresholds={k[6:].lower(): float(v) for k, v in os.environ.items()
+                              if k.startswith("ALERT_") and v.strip()},
         )

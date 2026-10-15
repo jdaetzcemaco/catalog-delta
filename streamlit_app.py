@@ -70,6 +70,7 @@ pages = {
         st.Page("app/pages/cambios.py", title="Cambios del día", icon="🔄"),
         st.Page("app/pages/inventario.py", title="Inventario Omnicanal", icon="📦"),
         st.Page("app/pages/historial.py", title="Historial", icon="📈"),
+        st.Page("app/pages/alertas.py", title="Alertas", icon="🚨"),
     ],
     "Comercial": [st.Page("app/pages/campanas.py", title="Campañas", icon="🎯")],
     "Equipos": [st.Page("app/pages/productividad.py", title="Productividad", icon="👥")],

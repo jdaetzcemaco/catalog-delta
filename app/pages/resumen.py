@@ -33,6 +33,18 @@ st.title("Resumen del catálogo")
 st.caption(f"Catálogo del **{ui.fmt_day(day)}** · archivo `{m['source']['source']}`")
 ui.quality_banner(m)
 
+pending = data.open_alerts(day) if day in data.alert_days() else []
+if pending:
+    icons = {"alta": "🔴", "media": "🟠", "baja": "🔵"}
+    with st.container(border=True):
+        h = st.columns([4, 1])
+        h[0].markdown(f"**{len(pending)} alertas pendientes**")
+        h[1].page_link("app/pages/alertas.py", label="Ver alertas", icon="🚨")
+        for a in pending[:5]:
+            st.markdown(f"{icons.get(a['severity'], '⚪')} {a['title']}")
+        if len(pending) > 5:
+            st.caption(f"… y {len(pending) - 5} más")
+
 st.subheader("Salud del catálogo")
 r1 = st.columns(4)
 ui.kpi(r1[0], "Total SKUs", s["Total SKUs"], delta("Total SKUs"), chart=trend("Total SKUs"))

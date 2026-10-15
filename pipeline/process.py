@@ -19,6 +19,8 @@ from typing import Protocol
 import pandas as pd
 
 from catalog_core import load_catalog, load_productivity, run_catalog
+from catalog_core.alerts import (AlertThresholds, catalog_alerts, export_late_alert, finalize, list_alerts,
+                                 new_visible_weak_alert, tipo_c_stuck_alert)
 from catalog_core.campaigns import readiness
 from catalog_core.productivity import detect_report
 from catalog_core.sku_history import rebuild_visible_history, update_visible_history, update_workflow_dates
@@ -51,6 +53,7 @@ class PassReport:
     mail: list[str] = field(default_factory=list)
     upgraded: list[str] = field(default_factory=list)
     lists: list[str] = field(default_factory=list)
+    alerts: int | None = None
     warnings: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     skipped: bool = False
@@ -407,6 +410,55 @@ class Job:
                 report.errors.append(f"list status {lid}: {exc}")
             self._renew_lock()
 
+    # ── alerts ──────────────────────────────────────────────────────────────
+    def run_alerts(self, report: PassReport) -> None:
+        """
+        Recompute the alerts for the latest catalog day from stored results. Cheap, so it
+        runs every pass: the "export late" rule depends on the clock, not on new files.
+        """
+        index = self.store.load_index()
+        days = sorted(index["catalog"])
+        if not days:
+            return
+        day = days[-1]
+        today = datetime.now(LOCAL_TZ).strftime("%Y-%m-%d") if LOCAL_TZ else datetime.now().strftime("%Y-%m-%d")
+        t = AlertThresholds(**{k: v for k, v in self.settings.alert_thresholds.items()
+                               if k in AlertThresholds.__dataclass_fields__})
+        try:
+            manifest = self.store.load_manifest(day) or {}
+            prev_day = manifest.get("previous_day")
+            previous = self.store.load_manifest(prev_day) if prev_day else None
+            alerts = catalog_alerts(day, manifest, previous, t)
+            alerts += new_visible_weak_alert(day, self.store.load_table(day, "changes", "New SKUs"), t)
+            alerts += tipo_c_stuck_alert(day, self.store.load_table(day, "inventory", "tipo_c_stock"),
+                                         self.store.load_visible_history(), t)
+            alerts += export_late_alert(today, day, t)
+
+            statuses, prev_statuses = {}, {}
+            for lid, e in index["lists"].items():
+                if e.get("status", "active") != "active" or day not in e.get("status_days", []):
+                    continue
+                statuses[lid] = self.store.load_list_status(lid, day)
+                earlier = [d for d in e["status_days"] if d < day]
+                prev_statuses[lid] = self.store.load_list_status(lid, max(earlier)) if earlier else None
+            alerts += list_alerts(day, index["lists"], statuses, prev_statuses, t)
+
+            previous_alerts = (self.store.load_alerts(prev_day) or {}).get("alerts") if prev_day else None
+            payload = {"day": day, "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                       "alerts": finalize(alerts, previous_alerts, datetime.now(timezone.utc).isoformat(timespec="seconds"))}
+            self.store.save_alerts(day, payload)
+            by_sev = {}
+            for a in payload["alerts"]:
+                by_sev[a["severity"]] = by_sev.get(a["severity"], 0) + 1
+            index["alerts"] = {"last_day": day, "counts": by_sev,
+                               "days": sorted(set(index["alerts"].get("days", [])) | {day})}
+            self.store.save_index(index)
+            report.alerts = len(payload["alerts"])
+            log.info("Alerts for %s: %s %s", day, len(payload["alerts"]), by_sev)
+        except Exception as exc:
+            log.exception("Alerts failed")
+            report.errors.append(f"alerts: {exc}")
+
     # ── e-mail reports ──────────────────────────────────────────────────────
     def run_mail(self, report: PassReport) -> None:
         """Save new STEP report attachments to incoming/ (before productivity runs)."""
@@ -452,6 +504,7 @@ class Job:
             self.audit_productivity(report)
             self.update_sku_history(report)
             self.run_campaigns(report)
+            self.run_alerts(report)
         finally:
             self.store.release_lock(owner)
         return report

@@ -107,5 +107,40 @@ def write_list(meta: dict) -> None:
                           json.dumps(meta, ensure_ascii=False, indent=2).encode())
 
 
+# ── alerts ──────────────────────────────────────────────────────────────────
+def alert_days() -> list[str]:
+    return sorted(index()["alerts"].get("days", []), reverse=True)
+
+
+@st.cache_data(ttl=TTL, show_spinner=False)
+def alerts(day: str) -> list[dict]:
+    return (store().load_alerts(day) or {}).get("alerts", [])
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def acks() -> dict:
+    return store().load_acks()
+
+
+def acknowledge(alert_id: str, user: str = "") -> None:
+    current = store().load_acks()
+    current[alert_id] = {"at": pd.Timestamp.utcnow().isoformat(timespec="seconds"), "by": user}
+    store().save_acks(current)
+    acks.clear()
+
+
+def unacknowledge(alert_id: str) -> None:
+    current = store().load_acks()
+    current.pop(alert_id, None)
+    store().save_acks(current)
+    acks.clear()
+
+
+def open_alerts(day: str) -> list[dict]:
+    """Alerts of the day not yet marked as reviewed."""
+    done = acks()
+    return [a for a in alerts(day) if a["id"] not in done]
+
+
 def refresh() -> None:
     st.cache_data.clear()

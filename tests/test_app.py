@@ -14,7 +14,7 @@ from pipeline.storage import LocalStorage
 
 AppTest = pytest.importorskip("streamlit.testing.v1").AppTest
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-PAGES = ["resumen", "cambios", "inventario", "historial", "productividad", "cargar", "campanas"]
+PAGES = ["resumen", "cambios", "inventario", "historial", "productividad", "cargar", "campanas", "alertas"]
 
 
 def _xlsx(df: pd.DataFrame, sheet: str) -> bytes:

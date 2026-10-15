@@ -69,9 +69,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if report.skipped:
         return 0
-    logging.info("Done: catalogs=%s recomputed=%s mail=%s productivity=%s lists=%s errors=%s",
+    logging.info("Done: catalogs=%s recomputed=%s mail=%s productivity=%s lists=%s alerts=%s errors=%s",
                  report.catalogs, report.recomputed, report.mail, report.productivity, report.lists,
-                 len(report.errors))
+                 report.alerts, len(report.errors))
     for err in report.errors:
         logging.error(err)
     return 1 if report.errors else 0

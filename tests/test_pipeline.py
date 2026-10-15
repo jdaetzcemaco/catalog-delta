@@ -356,3 +356,37 @@ def test_visible_history_rebuilds_when_a_day_arrives_late(env):
     hist = job.store.load_visible_history().set_index("SKU")
     assert hist.loc["1", "visible_streak"] == 2 and hist.loc["1", "days_visible"] == 2
     assert job.store.load_index()["sku_history"]["visible_days"] == ["2026-04-01", "2026-04-02", "2026-04-03"]
+
+
+def test_alerts_are_written_each_pass_and_remember_first_seen(env, monkeypatch):
+    import json
+
+    job, drop, history, sku = env
+    drop("catalog-daily-2026-04-01.xlsx", [sku(str(i)) for i in range(20)])
+    job.storage.write("cemaco-reports/incoming/lists/promo.json", json.dumps(
+        {"name": "Promo", "skus": [str(i) for i in range(20)], "status": "active"}).encode())
+    job.run()
+    # Everything ready, nothing dropped; only the clock-based "export late" rule can fire on test dates
+    assert [a["rule"] for a in job.store.load_alerts("2026-04-01")["alerts"]] == ["export_late"]
+
+    # Next day: 5 SKUs hidden -> list regression (alta) + low readiness? 75% < 80 -> yes
+    drop("catalog-daily-2026-04-02.xlsx", [sku(str(i), VISIBLE="No" if i < 5 else "Si") for i in range(20)])
+    r = job.run()
+    payload = job.store.load_alerts("2026-04-02")
+    rules = {a["rule"]: a for a in payload["alerts"]}
+    assert set(rules) >= {"list_regression", "list_low_ready"} and rules["list_regression"]["skus"] == [str(i) for i in range(5)]
+    assert rules["list_regression"]["severity"] == "alta"
+    assert job.store.load_index()["alerts"]["last_day"] == "2026-04-02"
+
+    # Day 3 same state: regression gone, low readiness persists with first_seen from day 2
+    drop("catalog-daily-2026-04-03.xlsx", [sku(str(i), VISIBLE="No" if i < 5 else "Si") for i in range(20)])
+    job.run()
+    rules = {a["rule"]: a for a in job.store.load_alerts("2026-04-03")["alerts"]}
+    assert "list_regression" not in rules and rules["list_low_ready"]["first_seen"] == "2026-04-02"
+
+
+def test_alert_thresholds_from_env(monkeypatch):
+    from pipeline.config import Settings
+
+    monkeypatch.setenv("ALERT_LIST_MIN_READY_PCT", "95")
+    assert Settings.from_env().alert_thresholds["list_min_ready_pct"] == 95.0
