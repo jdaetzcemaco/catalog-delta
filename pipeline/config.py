@@ -57,7 +57,15 @@ class Settings:
 
     history_enabled: bool = True
     google_sheet_id: str = DEFAULT_SHEET_ID
+    # One Google service account for GA4, Search Console and the history sheet. Either the
+    # key JSON itself (GOOGLE_SERVICE_ACCOUNT_JSON, or legacy GCP_SERVICE_ACCOUNT_JSON) or a
+    # path to the key file (GOOGLE_APPLICATION_CREDENTIALS, e.g. a Render secret file).
     google_service_account: dict | None = None
+    ga4_property_id: str = ""
+    gsc_site: str = "sc-domain:cemaco.com"
+    ga4_enabled: bool = True
+    ga4_backfill_days: int = 90
+    ga4_refresh_days: int = 3          # re-pull the last N days (GA4 closes a day after 24–48 h)
 
     # Alert thresholds (catalog_core.alerts.AlertThresholds), overridable as ALERT_<FIELD>
     alert_thresholds: dict = field(default_factory=dict)
@@ -66,7 +74,10 @@ class Settings:
     def from_env(cls) -> "Settings":
         load_dotenv()
         env = os.environ.get
-        sa = env("GCP_SERVICE_ACCOUNT_JSON", "")
+        sa = env("GOOGLE_SERVICE_ACCOUNT_JSON", "") or env("GCP_SERVICE_ACCOUNT_JSON", "")
+        if not sa and env("GOOGLE_APPLICATION_CREDENTIALS") and os.path.isfile(env("GOOGLE_APPLICATION_CREDENTIALS")):
+            with open(env("GOOGLE_APPLICATION_CREDENTIALS"), encoding="utf-8") as fh:
+                sa = fh.read()
         return cls(
             storage=env("STORAGE", "graph"),
             local_root=env("LOCAL_ROOT", "data/onedrive"),
@@ -89,6 +100,11 @@ class Settings:
             history_enabled=env("HISTORY_ENABLED", "true").lower() in ("1", "true", "yes"),
             google_sheet_id=env("GOOGLE_SHEET_ID", DEFAULT_SHEET_ID),
             google_service_account=json.loads(sa) if sa else None,
+            ga4_property_id=env("GA4_PROPERTY_ID", ""),
+            gsc_site=env("GSC_SITE", cls.gsc_site),
+            ga4_enabled=env("GA4_ENABLED", "true").lower() in ("1", "true", "yes"),
+            ga4_backfill_days=int(env("GA4_BACKFILL_DAYS", str(cls.ga4_backfill_days))),
+            ga4_refresh_days=int(env("GA4_REFRESH_DAYS", str(cls.ga4_refresh_days))),
             alert_thresholds={k[6:].lower(): float(v) for k, v in os.environ.items()
                               if k.startswith("ALERT_") and v.strip()},
         )
