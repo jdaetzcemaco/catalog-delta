@@ -405,8 +405,8 @@ def test_ga4_and_gsc_pass_backfill_in_chunks_and_build_sku_performance(env):
 
         def items_report(self, day):
             self.calls.append(day)
-            return pd.DataFrame({"day": [day], "itemId": ["100"], "itemName": ["A"], "itemsViewed": [3],
-                                 "itemsAddedToCart": [1], "itemsPurchased": [0], "itemRevenue": [0.0]})
+            return pd.DataFrame({"day": [day], "itemId": ["100"], "itemVariant": ["1"], "SKU": ["1"], "itemName": ["A"],
+                                 "itemsViewed": [3], "itemsAddedToCart": [1], "itemsPurchased": [0], "itemRevenue": [0.0]})
 
         def landing_report(self, day):
             return pd.DataFrame({"day": [day], "landingPagePlusQueryString": ["/a-1/p"],
@@ -429,6 +429,7 @@ def test_ga4_and_gsc_pass_backfill_in_chunks_and_build_sku_performance(env):
     perf = job.store.load_perf().set_index("SKU")
     # Both SKUs belong to the test fixture's product? conftest has no PRODUCT ID → map by SKU only
     assert perf.loc["1", "organic_sessions_7d"] == 2 * 7 and perf.loc["1", "clicks_30d"] == 28  # GSC lags 3 days
+    assert perf.loc["1", "vistas_30d"] == 3 * 30 and perf.loc["2", "vistas_30d"] == 0
     assert perf.loc["1", "posicion_30d"] == 4.0
     assert job.store.load_index()["perf"]["as_of"] == yesterday
     assert len(job.run().ga4) == 2  # only the refresh window remains

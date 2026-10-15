@@ -1,36 +1,39 @@
 """
 Per-product and per-SKU performance aggregates from the daily GA4 / Search Console rows.
 
-GA4 identifies e-commerce items by PRODUCT ID (verified 2026-10-15: 100% match), so item
-metrics (views, cart, purchases, revenue) live at product level and are attributed to
-every SKU of the product. Landing-page sessions and Search Console rows carry the SKU in
-the URL, so those are per SKU.
+GA4 sends itemId = PRODUCT ID and itemVariant = SKU (verified 2026-10-15: 100% match), so
+item metrics (views, cart, purchases, revenue) are kept per SKU. Landing-page sessions
+and Search Console rows carry the SKU in the URL, so those are per SKU too.
 """
 
 from __future__ import annotations
+
+import re
 
 import pandas as pd
 
 WINDOWS = (7, 30, 90)
 ITEM_COLS = {"itemsViewed": "vistas", "itemsAddedToCart": "carrito", "itemsPurchased": "compras", "itemRevenue": "ingresos"}
-PRODUCT_METRICS = list(ITEM_COLS.values())
+ITEM_METRIC_NAMES = PRODUCT_METRICS = list(ITEM_COLS.values())
 LANDING_METRICS = ["sessions", "organic_sessions"]
 GSC_METRICS = ["clicks", "impressions"]
 
 
-def daily_product_frame(items_by_day: dict[str, pd.DataFrame]) -> pd.DataFrame:
-    """One row per (day, product_id) with GA4 item metrics."""
+def daily_item_frame(items_by_day: dict[str, pd.DataFrame]) -> pd.DataFrame:
+    """One row per (day, SKU) with GA4 item metrics (SKU from itemVariant)."""
     frames = []
     for day, items in items_by_day.items():
         if items is None or items.empty:
             continue
         d = items.rename(columns=ITEM_COLS)
-        d = d.assign(product_id=d["itemId"].astype(str).str.strip().str.replace(r"\.0$", "", regex=True))
-        d = d.groupby("product_id", as_index=False)[PRODUCT_METRICS].sum()
+        sku = d["SKU"] if "SKU" in d.columns else d["itemVariant"]
+        d = d.assign(SKU=sku.astype(str).str.strip().str.replace(r"\.0$", "", regex=True))
+        d = d[~d["SKU"].isin(["", "(not set)", "nan"])]
+        d = d.groupby("SKU", as_index=False)[PRODUCT_METRICS].sum()
         d.insert(0, "day", pd.Timestamp(day))
         frames.append(d)
     if not frames:
-        return pd.DataFrame(columns=["day", "product_id", *PRODUCT_METRICS])
+        return pd.DataFrame(columns=["day", "SKU", *PRODUCT_METRICS])
     return pd.concat(frames, ignore_index=True)
 
 
@@ -110,28 +113,27 @@ def rolling_aggregates(daily: pd.DataFrame, key: str, metrics: list[str], as_of:
     return out
 
 
-def product_aggregates(daily_product: pd.DataFrame, as_of: str) -> pd.DataFrame:
-    out = rolling_aggregates(daily_product, "product_id", PRODUCT_METRICS, as_of, "vistas", "vistas")
+def item_aggregates(daily_item: pd.DataFrame, as_of: str) -> pd.DataFrame:
+    out = rolling_aggregates(daily_item, "SKU", PRODUCT_METRICS, as_of, "vistas", "vistas")
     if not out.empty:
         out["tasa_carrito_30d"] = (out["carrito_30d"] / out["vistas_30d"].where(out["vistas_30d"] > 0)).round(4)
         out["tasa_compra_30d"] = (out["compras_30d"] / out["vistas_30d"].where(out["vistas_30d"] > 0)).round(4)
     return out
 
 
-def sku_performance(sku_map: pd.DataFrame, product_perf: pd.DataFrame, landing_perf: pd.DataFrame | None,
+def sku_performance(sku_map: pd.DataFrame, item_perf: pd.DataFrame, landing_perf: pd.DataFrame | None,
                     gsc_perf: pd.DataFrame | None) -> pd.DataFrame:
     """
-    Per-SKU view the app reads: product metrics attributed to each SKU of the product
-    (with `skus_del_producto` so shared numbers are visible), plus SKU-level sessions and
-    Search Console. `sku_map` has SKU and PRODUCT ID from the catalog snapshot.
+    Per-SKU view the app reads: GA4 item metrics, landing sessions and Search Console,
+    for every SKU of the catalog snapshot (`sku_map`: SKU, PRODUCT ID). Zeros mean "no
+    activity recorded"; GA4 drops very-low-volume rows, so zero is not a hard fact.
     """
-    m = sku_map[["SKU", "PRODUCT ID"]].dropna().copy()
-    m["product_id"] = m["PRODUCT ID"].astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
-    m["skus_del_producto"] = m.groupby("product_id")["SKU"].transform("size")
-    out = m[["SKU", "product_id", "skus_del_producto"]].merge(product_perf, on="product_id", how="left")
-    for extra in (landing_perf, gsc_perf):
+    out = sku_map[["SKU"]].drop_duplicates().copy()
+    if "PRODUCT ID" in sku_map.columns:
+        out["product_id"] = sku_map["PRODUCT ID"].astype(str).str.strip().str.replace(r"\.0$", "", regex=True).values
+    for extra in (item_perf, landing_perf, gsc_perf):
         if extra is not None and not extra.empty:
             out = out.merge(extra.drop(columns=["as_of"], errors="ignore"), on="SKU", how="left")
-    num = [c for c in out.columns if c.endswith(("d", "d_prev")) and c not in ("ultimo_dia_vistas",)]
+    num = [c for c in out.columns if re.search(r"_(7|30|90)d(_prev)?$", c)]
     out[num] = out[num].fillna(0)
     return out

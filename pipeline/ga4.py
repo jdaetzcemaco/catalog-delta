@@ -3,7 +3,8 @@ Google Analytics 4 Data API: daily item-scoped e-commerce metrics and landing-pa
 sessions by channel, mapped to catalog SKUs.
 
 Two reports per day (item metrics cannot be mixed with session-scoped dimensions):
-  items:   itemId, itemName × itemsViewed, itemsAddedToCart, itemsPurchased, itemRevenue
+  items:   itemId (PRODUCT ID), itemVariant (SKU), itemName × itemsViewed, itemsAddedToCart,
+           itemsPurchased, itemRevenue   — verified 2026-10-15: itemVariant == catalog SKU (100%)
   landing: landingPagePlusQueryString, sessionDefaultChannelGroup × sessions, engagedSessions
 Product URLs on the VTEX store look like https://cemaco.com/<slug>-<sku>/p, so the
 landing path maps to a SKU with a regex on the trailing number.
@@ -73,8 +74,9 @@ class GA4Client:
         return df
 
     def items_report(self, day: str) -> pd.DataFrame:
-        df = self._run(["itemId", "itemName"], ITEM_METRICS, day)
+        df = self._run(["itemId", "itemVariant", "itemName"], ITEM_METRICS, day)
         df.insert(0, "day", day)
+        df["SKU"] = df["itemVariant"].astype(str).str.strip()
         return df
 
     def landing_report(self, day: str) -> pd.DataFrame:

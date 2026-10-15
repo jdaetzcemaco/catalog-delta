@@ -48,12 +48,13 @@ def main() -> int:
         store = ResultStore(make_storage(s), s.processed_dir)
         day_cat = store.run_days()[-1]
         snap = store.load_snapshot(day_cat, columns=["SKU", "PRODUCT ID"])
-        ids = items["itemId"].astype(str).str.strip()
-        sku_rate = ids.isin(set(snap["SKU"].astype(str))).mean()
-        pid_rate = ids.isin(set(snap["PRODUCT ID"].astype(str).str.replace(r"\.0$", "", regex=True))).mean()
-        print(f"\nitemId vs catalog {day_cat}: matches SKU {sku_rate:.1%}, matches PRODUCT ID {pid_rate:.1%}")
-        print("→ itemId IS the SKU" if sku_rate >= 0.8 else
-              "→ itemId is NOT the SKU; use PRODUCT ID mapping" if pid_rate >= 0.8 else "→ neither matched well: inspect samples")
+        skus = set(snap["SKU"].astype(str))
+        var_rate = items["SKU"].isin(skus).mean()
+        pid_rate = items["itemId"].astype(str).str.strip().isin(
+            set(snap["PRODUCT ID"].astype(str).str.replace(r"\.0$", "", regex=True))).mean()
+        print(f"\nvs catalog {day_cat}: itemVariant matches SKU {var_rate:.1%}, itemId matches PRODUCT ID {pid_rate:.1%}")
+        print("→ OK: item metrics will be stored per SKU" if var_rate >= 0.8 else
+              "→ itemVariant is NOT the SKU: check the GA4 e-commerce tagging")
     except Exception as exc:
         print(f"(catalog join skipped: {exc})")
 

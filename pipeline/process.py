@@ -430,7 +430,7 @@ class Job:
         """Pull GA4 item + landing reports for missing/recent days (GA4 closes a day after 24–48 h)."""
         if self.ga4 is None:
             return
-        from catalog_core.performance import daily_landing_frame, daily_product_frame
+        from catalog_core.performance import daily_item_frame, daily_landing_frame
 
         s = self.settings
         index = self.store.load_index()
@@ -456,7 +456,7 @@ class Job:
         if not new_items:
             return
         as_of = todo[0]
-        self._merge_daily("product", daily_product_frame(new_items), as_of)
+        self._merge_daily("item", daily_item_frame(new_items), as_of)
         self._merge_daily("landing", daily_landing_frame(new_landing), as_of)
         meta["days"], meta["as_of"] = sorted(stored), as_of
         self.store.save_index(index)
@@ -504,7 +504,7 @@ class Job:
         """Rebuild the per-SKU performance file the app reads, after new GA4/GSC days."""
         if not getattr(self, "_perf_dirty", False):
             return
-        from catalog_core.performance import (GSC_METRICS, LANDING_METRICS, product_aggregates, rolling_aggregates,
+        from catalog_core.performance import (GSC_METRICS, LANDING_METRICS, item_aggregates, rolling_aggregates,
                                               sku_performance)
 
         index = self.store.load_index()
@@ -513,8 +513,8 @@ class Job:
             return
         try:
             as_of = max(filter(None, [index["ga4"].get("as_of"), index["gsc"].get("as_of")]))
-            product = product_aggregates(self.store.load_daily("product") if self.store.load_daily("product") is not None
-                                         else pd.DataFrame(), as_of)
+            item_daily = self.store.load_daily("item")
+            item = item_aggregates(item_daily if item_daily is not None else pd.DataFrame(), as_of)
             landing_daily = self.store.load_daily("landing")
             landing = rolling_aggregates(landing_daily, "SKU", LANDING_METRICS, as_of, "organic_sessions") \
                 if landing_daily is not None else None
@@ -527,14 +527,14 @@ class Job:
                 gsc = gsc.merge((pos["w"] / pos["i"].where(pos["i"] > 0)).round(1).rename("posicion_30d").reset_index(),
                                 on="SKU", how="left")
             sku_map = self.store.load_snapshot(days[-1], columns=["SKU", "PRODUCT ID"])
-            perf = sku_performance(sku_map, product, landing, gsc)
+            perf = sku_performance(sku_map, item, landing, gsc)
             self.store.save_perf(perf)
             index["perf"] = {"as_of": as_of, "catalog_day": days[-1], "skus": int(len(perf)),
-                             "products_with_views_30d": int((product["vistas_30d"] > 0).sum()) if not product.empty else 0}
+                             "skus_with_views_30d": int((item["vistas_30d"] > 0).sum()) if not item.empty else 0}
             self.store.save_index(index)
             self._perf_dirty = False
-            log.info("Performance as of %s: %s SKUs, %s products with views in 30d", as_of, f"{len(perf):,}",
-                     index["perf"]["products_with_views_30d"])
+            log.info("Performance as of %s: %s SKUs, %s with views in 30d", as_of, f"{len(perf):,}",
+                     index["perf"]["skus_with_views_30d"])
         except Exception as exc:
             log.exception("Performance aggregates failed")
             report.errors.append(f"performance: {exc}")
