@@ -392,10 +392,11 @@ def test_alert_thresholds_from_env(monkeypatch):
     assert Settings.from_env().alert_thresholds["list_min_ready_pct"] == 95.0
 
 
-def test_ga4_pass_backfills_in_chunks_and_refreshes_recent_days(env, monkeypatch):
+def test_ga4_and_gsc_pass_backfill_in_chunks_and_build_sku_performance(env):
     from datetime import date, timedelta
 
     job, drop, history, sku = env
+    drop("catalog-daily-2026-04-01.xlsx", [sku("1"), sku("2")])
     job.settings.ga4_backfill_days = 40
     job.settings.ga4_refresh_days = 2
 
@@ -404,23 +405,30 @@ def test_ga4_pass_backfills_in_chunks_and_refreshes_recent_days(env, monkeypatch
 
         def items_report(self, day):
             self.calls.append(day)
-            return pd.DataFrame({"day": [day], "itemId": ["1"], "itemName": ["A"], "itemsViewed": [3],
+            return pd.DataFrame({"day": [day], "itemId": ["100"], "itemName": ["A"], "itemsViewed": [3],
                                  "itemsAddedToCart": [1], "itemsPurchased": [0], "itemRevenue": [0.0]})
 
         def landing_report(self, day):
-            return pd.DataFrame(columns=["day", "landingPagePlusQueryString", "sessionDefaultChannelGroup",
-                                         "sessions", "engagedSessions", "SKU"])
+            return pd.DataFrame({"day": [day], "landingPagePlusQueryString": ["/a-1/p"],
+                                 "sessionDefaultChannelGroup": ["Organic Search"], "sessions": [2],
+                                 "engagedSessions": [1], "SKU": ["1"]})
 
-    job.ga4 = FakeGA4()
+    class FakeGSC:
+        def pages_report(self, day):
+            return pd.DataFrame({"day": [day], "page": ["/a-1/p"], "clicks": [1], "impressions": [10], "ctr": [0.1],
+                                 "position": [4.0], "SKU": ["1"]})
+
+    job.ga4, job.gsc = FakeGA4(), FakeGSC()
     r = job.run()
-    assert len(r.ga4) == 30  # capped per pass
+    assert len(r.ga4) == 30 and len(r.gsc) == 30  # capped per pass
     yesterday = (date.today() - timedelta(days=1)).isoformat()
-    assert r.ga4[0] == yesterday
+    assert r.ga4[0] == yesterday and r.gsc[0] == (date.today() - timedelta(days=3)).isoformat()
     r2 = job.run()
-    # remaining 10 days + the 2 refreshed recent days
-    assert len(r2.ga4) == 12 and yesterday in r2.ga4
+    assert len(r2.ga4) == 12 and yesterday in r2.ga4   # 10 left + 2 refreshed
+
     perf = job.store.load_perf().set_index("SKU")
-    assert perf.loc["1", "vistas_30d"] == 3 * 30 and perf.loc["1", "vistas_7d"] == 3 * 7
-    assert job.store.load_index()["ga4"]["as_of"] == yesterday
-    # Nothing left but the refresh window
-    assert len(job.run().ga4) == 2
+    # Both SKUs belong to the test fixture's product? conftest has no PRODUCT ID → map by SKU only
+    assert perf.loc["1", "organic_sessions_7d"] == 2 * 7 and perf.loc["1", "clicks_30d"] == 28  # GSC lags 3 days
+    assert perf.loc["1", "posicion_30d"] == 4.0
+    assert job.store.load_index()["perf"]["as_of"] == yesterday
+    assert len(job.run().ga4) == 2  # only the refresh window remains

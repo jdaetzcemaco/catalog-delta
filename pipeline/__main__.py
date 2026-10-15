@@ -62,7 +62,11 @@ def main(argv: list[str] | None = None) -> int:
         ga4 = GA4Client(settings.ga4_property_id, settings.google_service_account)
     elif settings.ga4_enabled and settings.ga4_property_id:
         logging.warning("GA4_PROPERTY_ID is set but no Google credentials: skipping GA4")
-    job = Job(settings, storage, history, mailbox, ga4)
+    gsc = None
+    if settings.ga4_enabled and settings.gsc_site and settings.google_service_account:
+        from .gsc import GSCClient
+        gsc = GSCClient(settings.gsc_site, settings.google_service_account)
+    job = Job(settings, storage, history, mailbox, ga4, gsc)
     if args.recompute:
         index = job.store.load_index()
         if args.recompute not in index["catalog"]:
@@ -75,9 +79,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if report.skipped:
         return 0
-    logging.info("Done: catalogs=%s recomputed=%s mail=%s productivity=%s lists=%s ga4=%s alerts=%s errors=%s",
+    logging.info("Done: catalogs=%s recomputed=%s mail=%s productivity=%s lists=%s ga4=%s gsc=%s alerts=%s errors=%s",
                  report.catalogs, report.recomputed, report.mail, report.productivity, report.lists,
-                 len(report.ga4), report.alerts, len(report.errors))
+                 len(report.ga4), len(report.gsc), report.alerts, len(report.errors))
     for err in report.errors:
         logging.error(err)
     return 1 if report.errors else 0

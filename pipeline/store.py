@@ -21,7 +21,7 @@ from .storage import FileInfo, Storage, _join
 
 INDEX_VERSION = 1
 # Columns the app needs to label SKUs in change tables (name, category, links, image)
-SKU_INFO_COLS = ["SKU", "NOMBRE DE PRODUCTO", "MARCA", "AREA", "NIVEL 1", "NIVEL 2",
+SKU_INFO_COLS = ["SKU", "PRODUCT ID", "NOMBRE DE PRODUCTO", "MARCA", "AREA", "NIVEL 1", "NIVEL 2",
                  "VISIBLE", "HABILITADO/DESHABILITADO", "URL", "URL IMAGEN"]
 
 
@@ -72,6 +72,7 @@ class ResultStore:
         index.setdefault("sku_history", {})
         index.setdefault("alerts", {})
         index.setdefault("ga4", {})
+        index.setdefault("gsc", {})
         return index
 
     def save_index(self, index: dict) -> None:
@@ -246,10 +247,13 @@ class ResultStore:
         data = self.storage.read(self._p("perf", "sku_perf.parquet"))
         return None if data is None else from_parquet_bytes(data)
 
-    def save_ga4_daily(self, df: pd.DataFrame) -> None:
-        """Per (day, SKU) rows for the aggregation window, kept so a pass reads one file, not 90."""
-        self.storage.write(self._p("ga4", "daily_sku.parquet"), to_parquet_bytes(df))
+    def save_daily(self, name: str, df: pd.DataFrame) -> None:
+        """Per-day rows for the aggregation window (product, landing, gsc): one file per source."""
+        self.storage.write(self._p("perf", f"daily_{name}.parquet"), to_parquet_bytes(df))
 
-    def load_ga4_daily(self) -> pd.DataFrame | None:
-        data = self.storage.read(self._p("ga4", "daily_sku.parquet"))
+    def load_daily(self, name: str) -> pd.DataFrame | None:
+        data = self.storage.read(self._p("perf", f"daily_{name}.parquet"))
         return None if data is None else from_parquet_bytes(data)
+
+    def save_gsc_day(self, day: str, pages: pd.DataFrame) -> None:
+        self.storage.write(self._p("gsc", day, "pages.parquet"), to_parquet_bytes(pages))

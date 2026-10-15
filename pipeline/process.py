@@ -55,6 +55,7 @@ class PassReport:
     lists: list[str] = field(default_factory=list)
     alerts: int | None = None
     ga4: list[str] = field(default_factory=list)
+    gsc: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     skipped: bool = False
@@ -90,13 +91,15 @@ def is_new(entry: dict | None, f: FileInfo) -> bool:
 
 class Job:
     def __init__(self, settings: Settings, storage: Storage, history: History | None = None,
-                 mailbox=None, ga4=None):
+                 mailbox=None, ga4=None, gsc=None):
         self.settings = settings
         self.storage = storage
         self.store = ResultStore(storage, settings.processed_dir)
         self.history = history
         self.mailbox = mailbox
         self.ga4 = ga4
+        self.gsc = gsc
+        self._perf_dirty = False
         self.owner: str | None = None
         self._last: tuple[str, pd.DataFrame] | None = None
 
@@ -412,31 +415,28 @@ class Job:
                 report.errors.append(f"list status {lid}: {exc}")
             self._renew_lock()
 
-    # ── GA4 ─────────────────────────────────────────────────────────────────
-    GA4_MAX_DAYS_PER_PASS = 30
+    # ── GA4 / Search Console ────────────────────────────────────────────────
+    PERF_MAX_DAYS_PER_PASS = 30
+
+    def _days_to_pull(self, stored: set[str], refresh_days: int, backfill_days: int, lag_days: int) -> list[str]:
+        """Newest first: the refresh window always, then days never stored, capped per pass."""
+        today = datetime.now(LOCAL_TZ).date() if LOCAL_TZ else datetime.now().date()
+        latest = today - timedelta(days=lag_days)
+        wanted = [(latest - timedelta(days=i)).isoformat() for i in range(backfill_days)]
+        refresh = set(wanted[:refresh_days])
+        return [d for d in wanted if d in refresh or d not in stored][:self.PERF_MAX_DAYS_PER_PASS]
 
     def run_ga4(self, report: PassReport) -> None:
-        """
-        Pull the GA4 item and landing reports for days not stored yet (newest first, up
-        to a cap per pass so a backfill spreads over a few runs) and always re-pull the
-        last `ga4_refresh_days`, then refresh the per-SKU rolling aggregates.
-        """
+        """Pull GA4 item + landing reports for missing/recent days (GA4 closes a day after 24–48 h)."""
         if self.ga4 is None:
             return
-        from catalog_core.performance import daily_sku_frame, rolling_aggregates
+        from catalog_core.performance import daily_landing_frame, daily_product_frame
 
         s = self.settings
         index = self.store.load_index()
         meta = index["ga4"]
         stored = set(meta.get("days", []))
-        today = datetime.now(LOCAL_TZ).date() if LOCAL_TZ else datetime.now().date()
-        yesterday = today - timedelta(days=1)
-        wanted = [(yesterday - timedelta(days=i)).isoformat() for i in range(s.ga4_backfill_days)]
-        refresh = set(wanted[:s.ga4_refresh_days])
-        todo = [d for d in wanted if d in refresh or d not in stored][:self.GA4_MAX_DAYS_PER_PASS]
-        if not todo:
-            return
-        daily = self.store.load_ga4_daily()
+        todo = self._days_to_pull(stored, s.ga4_refresh_days, s.ga4_backfill_days, lag_days=1)
         new_items, new_landing = {}, {}
         for day in todo:
             try:
@@ -455,22 +455,89 @@ class Job:
             self._renew_lock()
         if not new_items:
             return
-        fresh = daily_sku_frame(new_items, new_landing)
-        if daily is not None and not daily.empty:
-            daily["day"] = pd.to_datetime(daily["day"])
-            daily = pd.concat([daily[~daily["day"].isin(fresh["day"].unique())], fresh], ignore_index=True)
-        else:
-            daily = fresh
-        cutoff = pd.Timestamp(yesterday) - pd.Timedelta(days=s.ga4_backfill_days + 30)
-        daily = daily[daily["day"] >= cutoff]
-        self.store.save_ga4_daily(daily)
-        perf = rolling_aggregates(daily, yesterday.isoformat())
-        self.store.save_perf(perf)
-        meta["days"] = sorted(stored)
-        meta["as_of"] = yesterday.isoformat()
-        meta["skus_with_data_90d"] = int(len(perf))
+        as_of = todo[0]
+        self._merge_daily("product", daily_product_frame(new_items), as_of)
+        self._merge_daily("landing", daily_landing_frame(new_landing), as_of)
+        meta["days"], meta["as_of"] = sorted(stored), as_of
         self.store.save_index(index)
-        log.info("GA4 aggregates as of %s: %s SKUs", yesterday, f"{len(perf):,}")
+        self._perf_dirty = True
+
+    def run_gsc(self, report: PassReport) -> None:
+        """Pull Search Console pages for missing/recent days (final data lags 2–3 days)."""
+        if self.gsc is None:
+            return
+        from catalog_core.performance import daily_gsc_frame
+
+        s = self.settings
+        index = self.store.load_index()
+        meta = index["gsc"]
+        stored = set(meta.get("days", []))
+        todo = self._days_to_pull(stored, s.ga4_refresh_days + 1, s.ga4_backfill_days, lag_days=3)
+        new_pages = {}
+        for day in todo:
+            try:
+                pages = self.gsc.pages_report(day)
+                self.store.save_gsc_day(day, pages)
+                new_pages[day] = pages
+                stored.add(day)
+                report.gsc.append(day)
+                log.info("GSC %s: %s pages, %s product pages", day, len(pages), int(pages["SKU"].notna().sum()))
+            except Exception as exc:
+                log.exception("GSC %s failed", day)
+                report.errors.append(f"gsc {day}: {exc}")
+                break
+            self._renew_lock()
+        if not new_pages:
+            return
+        self._merge_daily("gsc", daily_gsc_frame(new_pages), todo[0])
+        meta["days"], meta["as_of"] = sorted(stored), todo[0]
+        self.store.save_index(index)
+        self._perf_dirty = True
+
+    def _merge_daily(self, name: str, fresh: pd.DataFrame, as_of: str) -> None:
+        from catalog_core.performance import merge_days
+
+        keep = self.settings.ga4_backfill_days + 30
+        self.store.save_daily(name, merge_days(self.store.load_daily(name), fresh, keep, as_of))
+
+    def refresh_performance(self, report: PassReport) -> None:
+        """Rebuild the per-SKU performance file the app reads, after new GA4/GSC days."""
+        if not getattr(self, "_perf_dirty", False):
+            return
+        from catalog_core.performance import (GSC_METRICS, LANDING_METRICS, product_aggregates, rolling_aggregates,
+                                              sku_performance)
+
+        index = self.store.load_index()
+        days = sorted(index["catalog"])
+        if not days:
+            return
+        try:
+            as_of = max(filter(None, [index["ga4"].get("as_of"), index["gsc"].get("as_of")]))
+            product = product_aggregates(self.store.load_daily("product") if self.store.load_daily("product") is not None
+                                         else pd.DataFrame(), as_of)
+            landing_daily = self.store.load_daily("landing")
+            landing = rolling_aggregates(landing_daily, "SKU", LANDING_METRICS, as_of, "organic_sessions") \
+                if landing_daily is not None else None
+            gsc_daily = self.store.load_daily("gsc")
+            gsc = rolling_aggregates(gsc_daily, "SKU", GSC_METRICS, as_of, "clicks") if gsc_daily is not None else None
+            if gsc is not None and gsc_daily is not None and not gsc_daily.empty:
+                recent = gsc_daily[pd.to_datetime(gsc_daily["day"]) > pd.Timestamp(as_of) - pd.Timedelta(days=30)]
+                pos = recent.assign(w=recent["position"] * recent["impressions"]).groupby("SKU").agg(
+                    w=("w", "sum"), i=("impressions", "sum"))
+                gsc = gsc.merge((pos["w"] / pos["i"].where(pos["i"] > 0)).round(1).rename("posicion_30d").reset_index(),
+                                on="SKU", how="left")
+            sku_map = self.store.load_snapshot(days[-1], columns=["SKU", "PRODUCT ID"])
+            perf = sku_performance(sku_map, product, landing, gsc)
+            self.store.save_perf(perf)
+            index["perf"] = {"as_of": as_of, "catalog_day": days[-1], "skus": int(len(perf)),
+                             "products_with_views_30d": int((product["vistas_30d"] > 0).sum()) if not product.empty else 0}
+            self.store.save_index(index)
+            self._perf_dirty = False
+            log.info("Performance as of %s: %s SKUs, %s products with views in 30d", as_of, f"{len(perf):,}",
+                     index["perf"]["products_with_views_30d"])
+        except Exception as exc:
+            log.exception("Performance aggregates failed")
+            report.errors.append(f"performance: {exc}")
 
     # ── alerts ──────────────────────────────────────────────────────────────
     def run_alerts(self, report: PassReport) -> None:
@@ -566,6 +633,8 @@ class Job:
             self.audit_productivity(report)
             self.update_sku_history(report)
             self.run_ga4(report)
+            self.run_gsc(report)
+            self.refresh_performance(report)
             self.run_campaigns(report)
             self.run_alerts(report)
         finally:

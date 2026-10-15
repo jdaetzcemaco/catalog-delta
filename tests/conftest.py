@@ -8,7 +8,7 @@ import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 CATALOG_COLS = [
-    "SKU", "NOMBRE DE PRODUCTO", "NOMBRE DE SKU", "DESCRIPCION ERP", "MARCA",
+    "SKU", "PRODUCT ID", "NOMBRE DE PRODUCTO", "NOMBRE DE SKU", "DESCRIPCION ERP", "MARCA",
     "TIENE PRECIO", "PRECIO", "STOCK", "TIENE STOCK", "VISIBLE",
     "HABILITADO/DESHABILITADO", "NIVEL 1", "NIVEL 2", "NIVEL 3",
     "TIENE IMAGEN", "IMAGEN PRIMARIA", "URL IMAGEN", "TEMPORADA ERP", "MODAL",
@@ -19,6 +19,7 @@ def sku(sku_id: str, **overrides) -> dict:
     """A complete, visible, in-stock, enabled SKU (score 95) with overrides."""
     row = {
         "SKU": sku_id,
+        "PRODUCT ID": "100",
         "NOMBRE DE PRODUCTO": f"Producto {sku_id}",
         "NOMBRE DE SKU": f"Producto {sku_id}",
         "DESCRIPCION ERP": "DESC",
