@@ -43,6 +43,8 @@ class Settings:
     diseno_pattern: str = "productivity-diseno-*.xlsx"
     edicion_pattern: str = "productivity-edicion-*.xlsx"
     ingresos_pattern: str = "productivity-ingresos-*.xlsx"
+    # Campaign lists written by the app (JSON with name + SKUs); the job ingests them
+    lists_dir: str = "cemaco-reports/incoming/lists"
     # On an empty store, only the newest N catalog files are processed
     bootstrap_files: int = 2
 
@@ -75,6 +77,7 @@ class Settings:
             diseno_pattern=env("DISENO_PATTERN", cls.diseno_pattern),
             edicion_pattern=env("EDICION_PATTERN", cls.edicion_pattern),
             ingresos_pattern=env("INGRESOS_PATTERN", cls.ingresos_pattern),
+            lists_dir=env("LISTS_DIR", cls.lists_dir),
             mail_enabled=env("MAIL_ENABLED", "true").lower() in ("1", "true", "yes"),
             mail_user=env("MAIL_USER", ""),
             mail_sender=env("MAIL_SENDER", cls.mail_sender),

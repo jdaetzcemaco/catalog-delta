@@ -207,9 +207,12 @@ def test_backfill_reuses_the_day_just_computed(env, monkeypatch):
         drop(f"catalog-daily-2026-04-{d}.xlsx", [sku("1"), sku(d)])
     loads = []
     real = job.store.load_snapshot
-    monkeypatch.setattr(job.store, "load_snapshot", lambda day, columns=None: loads.append(day) or real(day, columns))
+    monkeypatch.setattr(job.store, "load_snapshot",
+                        lambda day, columns=None: (loads.append(day) if columns is None else None) or real(day, columns))
     assert job.run(backfill=3).catalogs == ["2026-04-01", "2026-04-02", "2026-04-03"]
-    assert loads == []  # no snapshot downloaded: each previous day was still in memory
+    # No full snapshot downloaded as a baseline: each previous day was still in memory
+    # (the visible-history step reads only SKU/VISIBLE columns and is not counted)
+    assert loads == []
     assert job.store.load_manifest("2026-04-03")["sku_changes"] == {"new": 1, "removed": 1, "net": 0}
 
 
@@ -314,3 +317,42 @@ def test_audit_removes_stored_day_of_the_wrong_team_even_if_file_unchanged(env):
     # Stays out, and is not warned about again
     r = job.run()
     assert not r.warnings and "2026-09-28" not in job.store.load_index()["productivity"]["diseno"]
+
+
+def test_campaign_list_ingested_and_tracked_daily(env):
+    import json
+
+    job, drop, history, sku = env
+    drop("catalog-daily-2026-04-01.xlsx", [sku("1"), sku("2", VISIBLE="No")])
+    job.storage.write("cemaco-reports/incoming/lists/navidad.json", json.dumps(
+        {"name": "Navidad", "skus": ["1", "2", "9"], "status": "active", "owner": "ana"}).encode())
+    r = job.run()
+    assert "ingest navidad" in r.lists and "status navidad 2026-04-01" in r.lists
+    st = job.store.load_list_status("navidad", "2026-04-01").set_index("SKU")
+    assert st.loc["1", "listo"] and not st.loc["2", "listo"] and not st.loc["9", "en_catalogo"]
+    assert job.store.load_index()["lists"]["navidad"]["last_kpis"] == {"listos": 1, "total": 3}
+    # Visible history was built and joined
+    assert st.loc["1", "ultima_vez_visible"] == pd.Timestamp("2026-04-01")
+
+    # Nothing new: no recompute. New catalog day: new status; archived list: skipped
+    assert not job.run().lists
+    drop("catalog-daily-2026-04-02.xlsx", [sku("1"), sku("2")])
+    job.storage.write("cemaco-reports/incoming/lists/navidad.json", json.dumps(
+        {"name": "Navidad", "skus": ["1", "2", "9"], "status": "archived"}).encode())
+    r = job.run()
+    assert r.lists == ["ingest navidad"]
+    assert job.store.load_list_status("navidad", "2026-04-02") is None
+    hist = job.store.load_visible_history().set_index("SKU")
+    assert hist.loc["2", "visible_streak"] == 1 and hist.loc["1", "visible_streak"] == 2
+
+
+def test_visible_history_rebuilds_when_a_day_arrives_late(env):
+    job, drop, history, sku = env
+    drop("catalog-daily-2026-04-01.xlsx", [sku("1", VISIBLE="No")])
+    drop("catalog-daily-2026-04-03.xlsx", [sku("1")])
+    job.run()
+    drop("catalog-daily-2026-04-02.xlsx", [sku("1")])
+    job.run()
+    hist = job.store.load_visible_history().set_index("SKU")
+    assert hist.loc["1", "visible_streak"] == 2 and hist.loc["1", "days_visible"] == 2
+    assert job.store.load_index()["sku_history"]["visible_days"] == ["2026-04-01", "2026-04-02", "2026-04-03"]

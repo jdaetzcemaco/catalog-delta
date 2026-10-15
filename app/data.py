@@ -79,5 +79,33 @@ def history() -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+# ── campaign lists ──────────────────────────────────────────────────────────
+def lists() -> dict:
+    """{list_id: index entry} for every ingested list, newest first."""
+    entries = index()["lists"]
+    return dict(sorted(entries.items(), key=lambda kv: kv[1].get("created_at") or "", reverse=True))
+
+
+@st.cache_data(ttl=TTL, show_spinner=False)
+def list_meta(list_id: str) -> dict | None:
+    return store().load_list(list_id)
+
+
+@st.cache_data(ttl=TTL, show_spinner="Cargando lista…")
+def list_status(list_id: str, day: str) -> pd.DataFrame | None:
+    return store().load_list_status(list_id, day)
+
+
+def write_list(meta: dict) -> None:
+    """Hand a list (new or updated) to the job via incoming/lists; the job owns processed/."""
+    import json
+
+    from pipeline.storage import _join
+
+    s = settings()
+    store().storage.write(_join(s.lists_dir, f"{meta['id']}.json"),
+                          json.dumps(meta, ensure_ascii=False, indent=2).encode())
+
+
 def refresh() -> None:
     st.cache_data.clear()

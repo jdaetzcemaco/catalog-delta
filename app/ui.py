@@ -22,7 +22,16 @@ LABELS = {
     "has_stock_yesterday": "Stock ayer", "has_name": "Nombre", "has_desc": "Descripción",
     "has_brand": "Marca", "is_enabled": "Habilitado", "taxonomy_depth": "Niveles",
     "taxonomy_points": "Pts. taxonomía",
+    # campaign readiness
+    "listo": "Listo", "en_catalogo": "En catálogo", "visible": "Visible", "habilitado": "Habilitado",
+    "contenido": "Contenido", "categoria_real": "Categoría", "stock": "Stock", "stock_confiable": "Stock confiable",
+    "score": "Score", "falta_imagen": "Falta imagen", "falta_precio": "Falta precio",
+    "falta_descripcion": "Falta descripción", "ultima_vez_visible": "Última vez visible",
+    "primera_vez_visto": "Primera vez visto", "dias_visible_seguidos": "Días visible seguidos",
+    "salida_flujo": "Salida del flujo", "fin_dat_log": "Fin Dat_Log", "equipo": "Equipo", "perdio": "Perdió",
 }
+BOOL_COLS = {"listo", "en_catalogo", "visible", "habilitado", "contenido", "categoria_real", "stock",
+             "stock_confiable", "falta_imagen", "falta_precio", "falta_descripcion"}
 INFO_COLS = {"NOMBRE DE PRODUCTO": "Producto", "NIVEL 1": "Nivel 1", "URL IMAGEN": "Imagen", "URL": "Página"}
 
 
@@ -69,7 +78,7 @@ def _as_checks(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy()
     for c in out.columns:
         s = out[c]
-        if c in LABELS and (c.startswith(("has_", "is_"))):
+        if c in BOOL_COLS or (c in LABELS and c.startswith(("has_", "is_"))):
             out[c] = s.map(lambda v: None if pd.isna(v) else bool(v))
         elif s.dtype == object and c.upper() == c:
             vals = set(s.dropna().astype(str).str.strip().str.lower().unique())
@@ -88,6 +97,12 @@ def _column_config(df: pd.DataFrame) -> dict:
             cfg[c] = st.column_config.ImageColumn("Imagen", width="small")
         elif c == "URL":
             cfg[c] = st.column_config.LinkColumn("Página", display_text="Ver ↗", width="small")
+        elif c in ("ultima_vez_visible", "primera_vez_visto", "salida_flujo"):
+            cfg[c] = st.column_config.DateColumn(label, format="DD/MM/YYYY")
+        elif c == "fin_dat_log":
+            cfg[c] = st.column_config.DatetimeColumn(label, format="DD/MM/YYYY HH:mm")
+        elif c == "score":
+            cfg[c] = st.column_config.ProgressColumn(label, min_value=0, max_value=MAX_SCORE, format="%d")
         elif c.startswith("content_score"):
             cfg[c] = st.column_config.ProgressColumn(label, min_value=0, max_value=MAX_SCORE, format="%d")
         elif c == "delta_score":

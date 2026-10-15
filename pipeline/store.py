@@ -68,6 +68,8 @@ class ResultStore:
         index.setdefault("version", INDEX_VERSION)
         index.setdefault("catalog", {})
         index.setdefault("productivity", {})
+        index.setdefault("lists", {})
+        index.setdefault("sku_history", {})
         return index
 
     def save_index(self, index: dict) -> None:
@@ -176,4 +178,35 @@ class ResultStore:
 
     def load_productivity(self, day: str, team: str) -> pd.DataFrame | None:
         data = self.storage.read(self._p("productivity", day, f"{team}.parquet"))
+        return None if data is None else from_parquet_bytes(data)
+
+    # ── campaign lists ──────────────────────────────────────────────────────
+    def save_list(self, meta: dict) -> None:
+        self.storage.write(self._p("lists", meta["id"], "list.json"),
+                           json.dumps(meta, indent=2, ensure_ascii=False).encode())
+
+    def load_list(self, list_id: str) -> dict | None:
+        raw = self.storage.read(self._p("lists", list_id, "list.json"))
+        return json.loads(raw) if raw else None
+
+    def save_list_status(self, list_id: str, day: str, df: pd.DataFrame) -> None:
+        self.storage.write(self._p("lists", list_id, "status", f"{day}.parquet"), to_parquet_bytes(df))
+
+    def load_list_status(self, list_id: str, day: str) -> pd.DataFrame | None:
+        data = self.storage.read(self._p("lists", list_id, "status", f"{day}.parquet"))
+        return None if data is None else from_parquet_bytes(data)
+
+    # ── per-SKU history ─────────────────────────────────────────────────────
+    def save_visible_history(self, df: pd.DataFrame) -> None:
+        self.storage.write(self._p("sku_history", "visible.parquet"), to_parquet_bytes(df))
+
+    def load_visible_history(self) -> pd.DataFrame | None:
+        data = self.storage.read(self._p("sku_history", "visible.parquet"))
+        return None if data is None else from_parquet_bytes(data)
+
+    def save_workflow_dates(self, df: pd.DataFrame) -> None:
+        self.storage.write(self._p("sku_history", "workflow.parquet"), to_parquet_bytes(df))
+
+    def load_workflow_dates(self) -> pd.DataFrame | None:
+        data = self.storage.read(self._p("sku_history", "workflow.parquet"))
         return None if data is None else from_parquet_bytes(data)

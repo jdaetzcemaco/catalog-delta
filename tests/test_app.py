@@ -14,7 +14,7 @@ from pipeline.storage import LocalStorage
 
 AppTest = pytest.importorskip("streamlit.testing.v1").AppTest
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-PAGES = ["resumen", "cambios", "inventario", "historial", "productividad", "cargar"]
+PAGES = ["resumen", "cambios", "inventario", "historial", "productividad", "cargar", "campanas"]
 
 
 def _xlsx(df: pd.DataFrame, sheet: str) -> bytes:
@@ -48,6 +48,11 @@ def store_root(tmp_path, make_sku, monkeypatch):
                              "Completitud Mercadeo (Calculado)": [12, 0], "Estado Imagen Primaria": ["Sin Imagen"] * 2,
                              "Fecha de Creación STEP": ["2026-04-01"] * 2})
     (incoming / "productivity-ingresos-2026-04-02.xlsx").write_bytes(_xlsx(ingresos, "Sheet1"))
+    import json
+    (root / "cemaco-reports" / "incoming" / "lists").mkdir(parents=True)
+    (root / "cemaco-reports" / "incoming" / "lists" / "navidad.json").write_text(json.dumps(
+        {"name": "Navidad", "skus": ["1", "2", "9"], "status": "active", "owner": "ana",
+         "created_at": "2026-04-02T12:00:00+00:00"}))
     Job(Settings(storage="local", local_root=str(root)), LocalStorage(str(root))).run()
 
     monkeypatch.setenv("STORAGE", "local")

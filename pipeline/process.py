@@ -19,7 +19,9 @@ from typing import Protocol
 import pandas as pd
 
 from catalog_core import load_catalog, load_productivity, run_catalog
+from catalog_core.campaigns import readiness
 from catalog_core.productivity import detect_report
+from catalog_core.sku_history import rebuild_visible_history, update_visible_history, update_workflow_dates
 
 from .config import Settings
 from .storage import FileInfo, Storage
@@ -48,13 +50,14 @@ class PassReport:
     productivity: list[str] = field(default_factory=list)
     mail: list[str] = field(default_factory=list)
     upgraded: list[str] = field(default_factory=list)
+    lists: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     skipped: bool = False
 
     @property
     def did_work(self) -> bool:
-        return bool(self.catalogs or self.recomputed or self.productivity or self.mail)
+        return bool(self.catalogs or self.recomputed or self.productivity or self.mail or self.lists)
 
 
 def file_day(f: FileInfo) -> str:
@@ -283,6 +286,127 @@ class Job:
         if changed:
             self.store.save_index(index)
 
+    # ── per-SKU history ─────────────────────────────────────────────────────
+    def update_sku_history(self, report: PassReport) -> None:
+        """
+        Keep visible.parquet (last day visible, streaks) and workflow.parquet (last exit
+        from the STEP workflows) current. Visibility folds in new days incrementally; a
+        day that arrived out of order triggers a rebuild from every stored snapshot.
+        """
+        index = self.store.load_index()
+        hist_meta = index["sku_history"]
+        days = sorted(index["catalog"])
+        if days:
+            done = set(hist_meta.get("visible_days", []))
+            pending = [d for d in days if d not in done]
+            last_done = max(done) if done else None
+            if pending:
+                try:
+                    if last_done and min(pending) < last_done:
+                        log.info("Visible history: rebuilding from %s snapshots", len(days))
+                        hist = rebuild_visible_history(
+                            [(d, self.store.load_snapshot(d, columns=["SKU", "VISIBLE"])) for d in days])
+                        done = set(days)
+                    else:
+                        hist = self.store.load_visible_history()
+                        for d in pending:
+                            hist = update_visible_history(hist, d, self.store.load_snapshot(d, columns=["SKU", "VISIBLE"]))
+                            done.add(d)
+                            self._renew_lock()
+                    self.store.save_visible_history(hist)
+                    hist_meta["visible_days"] = sorted(done)
+                    self.store.save_index(index)
+                    log.info("Visible history: %s SKUs, %s days", f"{len(hist):,}", len(done))
+                except Exception as exc:
+                    log.exception("Visible history failed")
+                    report.errors.append(f"visible history: {exc}")
+
+        done_wf = hist_meta.setdefault("workflow_files", [])
+        wf = self.store.load_workflow_dates()
+        changed = False
+        for team in ("diseno", "edicion"):
+            for day in sorted(index["productivity"].get(team, {})):
+                key = f"{team}/{day}"
+                if key in done_wf:
+                    continue
+                try:
+                    df = self.store.load_productivity(day, team)
+                    if df is not None and "<ID>" in df.columns:
+                        wf = update_workflow_dates(wf, "Diseño" if team == "diseno" else "Edición", df)
+                    done_wf.append(key)
+                    changed = True
+                except Exception as exc:
+                    log.exception("Workflow dates %s failed", key)
+                    report.errors.append(f"workflow dates {key}: {exc}")
+        if changed and wf is not None:
+            self.store.save_workflow_dates(wf)
+            self.store.save_index(index)
+
+    # ── campaign lists ──────────────────────────────────────────────────────
+    def run_campaigns(self, report: PassReport) -> None:
+        """
+        Ingest list files the app wrote to lists_dir (JSON: id, name, skus, status…) and
+        compute today's readiness for every active list on the latest catalog day.
+        """
+        import json
+
+        s = self.settings
+        index = self.store.load_index()
+        lists = index["lists"]
+        for f in self.storage.list(s.lists_dir, "*.json"):
+            entry = lists.get(f.name[:-5])
+            if entry and not is_new(entry.get("file"), f):
+                continue
+            try:
+                meta = json.loads(self.storage.read(f.path))
+                meta["id"] = f.name[:-5]
+                self.store.save_list(meta)
+                lists[meta["id"]] = {
+                    **{k: meta.get(k) for k in ("name", "status", "owner", "created_at")},
+                    "sku_count": len(meta.get("skus", [])),
+                    "file": ResultStore.source_entry(f),
+                    "status_days": (entry or {}).get("status_days", []),
+                }
+                self.store.save_index(index)
+                report.lists.append(f"ingest {meta['id']}")
+                log.info("List %s (%s): %s SKUs, %s", meta["id"], meta.get("name"), len(meta.get("skus", [])),
+                         meta.get("status", "active"))
+            except Exception as exc:
+                log.exception("List file %s failed", f.name)
+                report.errors.append(f"list {f.name}: {exc}")
+
+        days = sorted(index["catalog"])
+        if not days or not lists:
+            return
+        day = days[-1]
+        active = [lid for lid, e in lists.items() if e.get("status", "active") == "active"]
+        todo = [lid for lid in active if day not in lists[lid].get("status_days", [])
+                or f"ingest {lid}" in report.lists]
+        if not todo:
+            return
+        today_raw = self.store.load_snapshot(day)
+        from catalog_core import build_flags
+        flags = build_flags(today_raw)
+        visible = self.store.load_visible_history()
+        workflow = self.store.load_workflow_dates()
+        for lid in todo:
+            try:
+                meta = self.store.load_list(lid) or {}
+                status = readiness(meta.get("skus", []), today_raw, flags, visible, workflow)
+                self.store.save_list_status(lid, day, status)
+                days_done = set(lists[lid].get("status_days", []))
+                days_done.add(day)
+                lists[lid]["status_days"] = sorted(days_done)
+                lists[lid]["last_day"] = day
+                lists[lid]["last_kpis"] = {"listos": int(status["listo"].sum()), "total": len(status)}
+                self.store.save_index(index)
+                report.lists.append(f"status {lid} {day}")
+                log.info("List %s: %s/%s ready on %s", lid, int(status["listo"].sum()), len(status), day)
+            except Exception as exc:
+                log.exception("List %s status failed", lid)
+                report.errors.append(f"list status {lid}: {exc}")
+            self._renew_lock()
+
     # ── e-mail reports ──────────────────────────────────────────────────────
     def run_mail(self, report: PassReport) -> None:
         """Save new STEP report attachments to incoming/ (before productivity runs)."""
@@ -326,6 +450,8 @@ class Job:
             self.run_mail(report)
             self.run_productivity(report)
             self.audit_productivity(report)
+            self.update_sku_history(report)
+            self.run_campaigns(report)
         finally:
             self.store.release_lock(owner)
         return report
