@@ -22,7 +22,7 @@ from .storage import FileInfo, Storage, _join
 INDEX_VERSION = 1
 # Columns the app needs to label SKUs in change tables (name, category, links, image)
 SKU_INFO_COLS = ["SKU", "PRODUCT ID", "NOMBRE DE PRODUCTO", "MARCA", "AREA", "NIVEL 1", "NIVEL 2",
-                 "VISIBLE", "HABILITADO/DESHABILITADO", "STOCK", "TIENE STOCK", "PRECIO", "URL", "URL IMAGEN"]
+                 "VISIBLE", "HABILITADO/DESHABILITADO", "STOCK", "TIENE STOCK", "STOCK REAL", "PRECIO", "URL", "URL IMAGEN"]
 
 
 def slug(name: str) -> str:

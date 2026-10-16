@@ -44,10 +44,14 @@ def build_flags(df: pd.DataFrame) -> pd.DataFrame:
     has_image_url = nonempty(col(df, "URL IMAGEN"))
     f["has_image"] = (has_image_flag | has_primary_image | has_image_url).astype(int)
 
-    # Stock: STOCK value > 0 or "TIENE STOCK" flag
-    has_stock_value = (pd.to_numeric(col(df, "STOCK"), errors="coerce").fillna(0) > 0).astype(int)
-    has_stock_flag = yesno(col(df, "TIENE STOCK"))
-    f["has_stock"] = (has_stock_value | has_stock_flag).astype(int)
+    # Stock: STOCK value > 0 or "TIENE STOCK" flag. FIX F9: when the export's Inventarios
+    # sheet was read, STOCK REAL (warehouses without the MDR placeholder) is the truth.
+    if "STOCK REAL" in df.columns:
+        f["has_stock"] = (pd.to_numeric(df["STOCK REAL"], errors="coerce").fillna(0) > 0).astype(int)
+    else:
+        has_stock_value = (pd.to_numeric(col(df, "STOCK"), errors="coerce").fillna(0) > 0).astype(int)
+        has_stock_flag = yesno(col(df, "TIENE STOCK"))
+        f["has_stock"] = (has_stock_value | has_stock_flag).astype(int)
 
     # Visibility and enabled status
     f["is_visible"] = yesno(col(df, "VISIBLE"))

@@ -78,7 +78,8 @@ def readiness(
                       & (flags["has_name"] == 1) & (flags["has_desc"] == 1)).values,
         "categoria_real": (lower(col(today_raw, "NIVEL 1")) != TIPO_C).fillna(True).astype(bool).values,
         "stock": (flags["has_stock"] == 1).values,
-        "stock_confiable": ~(pd.to_numeric(col(today_raw, "STOCK"), errors="coerce") >= PLACEHOLDER_STOCK).values,
+        "stock_confiable": (pd.Series(True, index=today_raw.index) if "STOCK REAL" in today_raw.columns
+                            else ~(pd.to_numeric(col(today_raw, "STOCK"), errors="coerce") >= PLACEHOLDER_STOCK)).values,
         "score": flags["content_score"].values,
         "falta_imagen": (flags["has_image"] == 0).values,
         "falta_precio": (flags["has_price"] == 0).values,

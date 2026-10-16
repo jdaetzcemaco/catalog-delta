@@ -41,6 +41,7 @@ LABELS = {
     "impressions_90d": "Impresiones 90d", "clicks_7d_prev": "Clics 7d ant.", "posicion_30d": "Posición Google 30d",
     "tasa_carrito_30d": "Tasa carrito 30d", "tasa_compra_30d": "Tasa compra 30d", "ultimo_dia_vistas": "Última vista",
     "product_id": "Product ID", "STOCK": "Stock", "PRECIO": "Precio", "TIENE STOCK": "Tiene stock",
+    "STOCK REAL": "Stock real", "BODEGAS CON STOCK": "Bodegas con stock",
 }
 BOOL_COLS = {"listo", "en_catalogo", "visible", "habilitado", "contenido", "categoria_real", "stock",
              "stock_confiable", "falta_imagen", "falta_precio", "falta_descripcion"}
@@ -182,6 +183,11 @@ def quality_banner(manifest: dict | None) -> None:
     q = (manifest or {}).get("quality") or {}
     n_placeholder = q.get("stock_placeholder", 0)
     if not n_placeholder:
+        return
+    if q.get("stock_corrected"):
+        st.info(f"El export trae STOCK = 1,000,000 en {n(n_placeholder)} SKUs (bodega virtual MDR). El stock de este "
+                f"tablero se toma de la hoja *Inventarios* sin esa bodega: **{q.get('stock_real_pct', 0)}%** de los SKUs "
+                "tienen inventario real.", icon="ℹ️")
         return
     st.warning(
         f"**Stock no confiable en este export:** {n(n_placeholder)} SKUs ({q.get('stock_placeholder_pct', 0)}%) "

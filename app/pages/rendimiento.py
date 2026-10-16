@@ -39,11 +39,15 @@ ui.kpi(c[2], f"Impresiones en Google {W}", int(num(f"impressions_{W}")))
 # Catalog flags for the diagnostic views
 flags = None
 if info is not None and "TIENE STOCK" in info.columns:
-    flags = info[["SKU", "VISIBLE", "TIENE STOCK", "STOCK"]].drop_duplicates("SKU").copy()
-    stock_val = pd.to_numeric(flags["STOCK"], errors="coerce")
+    flags = info.drop_duplicates("SKU").copy()
     flags["visible"] = yesno(flags["VISIBLE"]) == 1
-    flags["con_stock"] = (yesno(flags["TIENE STOCK"]) == 1) | (stock_val.fillna(0) > 0)
-    flags["stock_confiable"] = ~(stock_val >= PLACEHOLDER_STOCK)
+    if "STOCK REAL" in flags.columns:
+        flags["con_stock"] = pd.to_numeric(flags["STOCK REAL"], errors="coerce").fillna(0) > 0
+        flags["stock_confiable"] = True
+    else:
+        stock_val = pd.to_numeric(flags["STOCK"], errors="coerce")
+        flags["con_stock"] = (yesno(flags["TIENE STOCK"]) == 1) | (stock_val.fillna(0) > 0)
+        flags["stock_confiable"] = ~(stock_val >= PLACEHOLDER_STOCK)
     flags = flags[["SKU", "visible", "con_stock", "stock_confiable"]]
 joined = perf.merge(flags, on="SKU", how="left") if flags is not None else perf
 

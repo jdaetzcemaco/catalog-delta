@@ -47,3 +47,43 @@ def test_full_report_round_trips_to_excel(make_sku, make_catalog):
     assert "Stock No Visible" in sheets and "Tipo C Graduados" in sheets
     back = pd.read_excel(io.BytesIO(to_excel_bytes(sheets)), sheet_name=None)
     assert back["New SKUs"]["SKU"].astype(str).tolist() == ["2"]
+
+
+def _workbook_with_inventory(skus_rows, inv_rows, warehouses):
+    out = io.BytesIO()
+    with pd.ExcelWriter(out, engine="openpyxl") as w:
+        pd.DataFrame(skus_rows).to_excel(w, sheet_name="SKUs", index=False)
+        inv = pd.DataFrame(inv_rows, columns=["Sku", "ProductName", "Total", *warehouses])
+        inv.to_excel(w, sheet_name="Inventarios", index=False)
+    return out.getvalue()
+
+
+def test_inventory_sheet_excludes_the_placeholder_warehouse(make_sku):
+    from catalog_core import build_flags
+    from catalog_core.loaders import attach_inventory, load_inventory_sheet
+    from catalog_core.quality import quality_checks
+
+    data = _workbook_with_inventory(
+        [make_sku("1", STOCK="1000003"), make_sku("2", STOCK="1000000"), make_sku("3", STOCK="7")],
+        [[1, "A", 1000003, 1000000, 3, 0], [2, "B", 1000000, 1000000, 0, 0], [3, "C", 7, 0, 5, 2]],
+        ["MDR", "T004", "T007"])
+    inv = load_inventory_sheet(data, name="catalog-daily.xlsx").set_index("SKU")
+    assert inv.loc["1", "STOCK REAL"] == 3 and inv.loc["2", "STOCK REAL"] == 0 and inv.loc["3", "STOCK REAL"] == 7
+    assert inv.loc["1", "STOCK PLACEHOLDER"] == 1_000_000 and inv.loc["3", "BODEGAS CON STOCK"] == 2
+
+    cat = attach_inventory(load_catalog(data, name="catalog-daily.xlsx"), inv.reset_index())
+    flags = build_flags(cat).set_index("SKU")
+    # F9: has_stock from STOCK REAL, so the placeholder-only SKU has no stock
+    assert flags.loc["1", "has_stock"] == 1 and flags.loc["2", "has_stock"] == 0 and flags.loc["3", "has_stock"] == 1
+    q = quality_checks(cat)
+    assert q["stock_corrected"] and q["stock_placeholder"] == 2 and q["stock_real_pct"] == round(2 / 3 * 100, 2)
+
+
+def test_inventory_sheet_absent():
+    from catalog_core.loaders import attach_inventory, load_inventory_sheet
+
+    data = _xlsx({"SKUs": pd.DataFrame({"SKU": [1]})})
+    assert load_inventory_sheet(data, name="x.xlsx") is None
+    assert load_inventory_sheet(b"", name="x.csv") is None
+    df = pd.DataFrame({"SKU": ["1"]})
+    assert attach_inventory(df, None) is df

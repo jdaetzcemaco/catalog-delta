@@ -67,6 +67,11 @@ class Settings:
     ga4_backfill_days: int = 90
     ga4_refresh_days: int = 3          # re-pull the last N days (GA4 closes a day after 24–48 h)
 
+    # VTEX (read-only checks: stock/price per SKU through the public search API)
+    vtex_account: str = ""
+    vtex_app_key: str = ""
+    vtex_app_token: str = ""
+
     # Alert thresholds (catalog_core.alerts.AlertThresholds), overridable as ALERT_<FIELD>
     alert_thresholds: dict = field(default_factory=dict)
 
@@ -105,6 +110,9 @@ class Settings:
             ga4_enabled=env("GA4_ENABLED", "true").lower() in ("1", "true", "yes"),
             ga4_backfill_days=int(env("GA4_BACKFILL_DAYS", str(cls.ga4_backfill_days))),
             ga4_refresh_days=int(env("GA4_REFRESH_DAYS", str(cls.ga4_refresh_days))),
+            vtex_account=env("VTEX_ACCOUNT", ""),
+            vtex_app_key=env("VTEX_APP_KEY", ""),
+            vtex_app_token=env("VTEX_APP_TOKEN", ""),
             alert_thresholds={k[6:].lower(): float(v) for k, v in os.environ.items()
                               if k.startswith("ALERT_") and v.strip()},
         )

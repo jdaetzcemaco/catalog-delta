@@ -78,3 +78,50 @@ def load_productivity(source: Source) -> pd.DataFrame:
     if "<ID>" in df.columns:
         df["<ID>"] = df["<ID>"].astype(str).str.strip()
     return df
+
+
+INVENTORY_SHEET = "Inventarios"
+# Virtual warehouse rows carry exactly this value since 2026-09-22 (bodega MDR); it is not stock
+STOCK_PLACEHOLDER_VALUE = 1_000_000
+STOCK_REAL, STOCK_PLACEHOLDER_COL, STOCK_BODEGAS = "STOCK REAL", "STOCK PLACEHOLDER", "BODEGAS CON STOCK"
+
+
+def load_inventory_sheet(source: Source, name: str | None = None) -> pd.DataFrame | None:
+    """
+    Per-SKU real stock from the export's 'Inventarios' sheet (one column per warehouse):
+    STOCK REAL = sum of warehouse cells that are not the placeholder value,
+    STOCK PLACEHOLDER = sum of placeholder cells, BODEGAS CON STOCK = warehouses with stock.
+    None when the workbook has no such sheet (CSV/Parquet sources, old exports).
+    """
+    fname = _name_of(source, name)
+    if os.path.splitext(fname)[1].lower() != ".xlsx":
+        return None
+    xl = pd.ExcelFile(_as_readable(source), engine="calamine")
+    if INVENTORY_SHEET not in xl.sheet_names:
+        return None
+    inv = pd.read_excel(xl, sheet_name=INVENTORY_SHEET)
+    inv.columns = [str(c).strip() for c in inv.columns]
+    sku_col = next((c for c in inv.columns if c.lower() == "sku"), None)
+    if sku_col is None:
+        return None
+    warehouses = [c for c in inv.columns if c not in (sku_col, "ProductName", "Total")]
+    num = inv[warehouses].apply(pd.to_numeric, errors="coerce").fillna(0)
+    placeholder = num == STOCK_PLACEHOLDER_VALUE
+    real = num.where(~placeholder, 0)
+    out = pd.DataFrame({
+        "SKU": inv[sku_col].astype(str).str.strip().str.replace(r"\.0$", "", regex=True),
+        STOCK_REAL: real.sum(axis=1).astype(int),
+        STOCK_PLACEHOLDER_COL: num.where(placeholder, 0).sum(axis=1).astype(int),
+        STOCK_BODEGAS: (real > 0).sum(axis=1).astype(int),
+    })
+    return out.drop_duplicates("SKU")
+
+
+def attach_inventory(catalog: pd.DataFrame, inventory: pd.DataFrame | None) -> pd.DataFrame:
+    """Add the STOCK REAL columns to the catalog frame (left join on SKU; missing → 0)."""
+    if inventory is None:
+        return catalog
+    out = catalog.merge(inventory, on="SKU", how="left")
+    for c in (STOCK_REAL, STOCK_PLACEHOLDER_COL, STOCK_BODEGAS):
+        out[c] = out[c].fillna(0).astype(int)
+    return out

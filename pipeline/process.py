@@ -19,6 +19,7 @@ from typing import Protocol
 import pandas as pd
 
 from catalog_core import load_catalog, load_productivity, run_catalog
+from catalog_core.loaders import attach_inventory, load_inventory_sheet
 from catalog_core.alerts import (AlertThresholds, catalog_alerts, export_late_alert, finalize, list_alerts,
                                  new_visible_weak_alert, organic_drop_alerts, tipo_c_stuck_alert, traffic_alerts)
 from catalog_core.campaigns import readiness
@@ -137,6 +138,11 @@ class Job:
             local = os.path.join(tmp, f.name)
             self.storage.download_to(f.path, local)
             today_raw = load_catalog(local, name=f.name)
+            inventory = load_inventory_sheet(local, name=f.name)
+        if inventory is not None:
+            today_raw = attach_inventory(today_raw, inventory)
+            log.info("%s: stock from Inventarios sheet (%s SKUs with real stock)", day,
+                     f"{int((today_raw['STOCK REAL'] > 0).sum()):,}")
         self._compute(index, day, today_raw, ResultStore.source_entry(f))
 
     def recompute_from_snapshot(self, index: dict, day: str) -> None:
@@ -264,6 +270,57 @@ class Job:
                 log.exception("Quality checks for %s failed", day)
                 report.errors.append(f"quality {day}: {exc}")
             self._renew_lock()
+
+    STOCK_UPGRADES_PER_PASS = 4
+
+    def upgrade_stock_source(self, report: PassReport) -> None:
+        """
+        Stored days that still use the placeholder STOCK (export since 2026-09-22) are
+        re-processed from their export file so has_stock comes from the Inventarios sheet.
+        Newest first, a few per pass; days whose file is gone from incoming/ are skipped.
+        """
+        index = self.store.load_index()
+        files = {f.name: f for f in self.storage.list(self.settings.incoming_dir, self.settings.catalog_pattern)}
+        done = 0
+        for day in sorted(index["catalog"], reverse=True):
+            if done >= self.STOCK_UPGRADES_PER_PASS:
+                break
+            m = self.store.load_manifest(day) or {}
+            q = m.get("quality") or {}
+            if q.get("stock_corrected") or q.get("stock_upgrade_attempted") or q.get("stock_placeholder_pct", 0) <= 1:
+                continue
+            f = files.get(index["catalog"][day].get("source", ""))
+            if f is None:
+                continue
+            try:
+                self._last = None
+                self.process_catalog(index, day, f)
+                done += 1
+                m = self.store.load_manifest(day) or {}
+                if (m.get("quality") or {}).get("stock_corrected"):
+                    report.upgraded.append(f"stock {day}")
+                    log.info("Stock source upgraded for %s", day)
+                else:
+                    # The export has no Inventarios sheet: remember so this is tried only once
+                    m.setdefault("quality", {})["stock_upgrade_attempted"] = True
+                    self.store.save_manifest(day, m)
+                    log.warning("Stock upgrade %s: export has no Inventarios sheet", day)
+            except Exception as exc:
+                log.exception("Stock upgrade %s failed", day)
+                report.errors.append(f"stock upgrade {day}: {exc}")
+            gc.collect()
+            self._renew_lock()
+        if done:
+            # The day after each upgraded day compares against it: recompute from snapshots
+            index = self.store.load_index()
+            for day in sorted({d for d in index["catalog"] if any(f"stock {p}" in report.upgraded
+                                                                    for p in [index["catalog"][d].get("previous_day")])}):
+                try:
+                    self._last = None
+                    self.recompute_from_snapshot(index, day)
+                    report.recomputed.append(day)
+                except Exception as exc:
+                    report.errors.append(f"recompute {day}: {exc}")
 
     def audit_productivity(self, report: PassReport) -> None:
         """
@@ -632,6 +689,7 @@ class Job:
         try:
             self.run_catalogs(report, backfill)
             self.add_missing_quality(report)
+            self.upgrade_stock_source(report)
             self.run_mail(report)
             self.run_productivity(report)
             self.audit_productivity(report)

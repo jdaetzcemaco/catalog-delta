@@ -93,7 +93,7 @@ def catalog_alerts(day: str, manifest: dict, previous: dict | None, t: AlertThre
     out: list[Alert] = []
     s, ps = manifest["summary"], (previous or {}).get("summary")
     q = manifest.get("quality") or {}
-    if q.get("stock_placeholder_pct", 0) > t.stock_placeholder_pct:
+    if q.get("stock_placeholder_pct", 0) > t.stock_placeholder_pct and not q.get("stock_corrected"):
         out.append(Alert(
             id="quality:stock_placeholder", rule="quality_stock_placeholder", severity="alta",
             title=f"Stock no confiable: {q['stock_placeholder']:,} SKUs ({q['stock_placeholder_pct']}%) con STOCK ≥ 1,000,000",
@@ -177,11 +177,15 @@ def traffic_alerts(day: str, perf: pd.DataFrame | None, info: pd.DataFrame | Non
     from .quality import PLACEHOLDER_STOCK
     from .text import yesno
 
-    i = info[["SKU", "VISIBLE", "TIENE STOCK", "STOCK"]].drop_duplicates("SKU")
+    i = info.drop_duplicates("SKU")
     visible = yesno(i["VISIBLE"]) == 1
-    stock_val = pd.to_numeric(i["STOCK"], errors="coerce")
-    has_stock = (yesno(i["TIENE STOCK"]) == 1) | (stock_val.fillna(0) > 0)
-    reliable = ~(stock_val >= PLACEHOLDER_STOCK)
+    if "STOCK REAL" in i.columns:
+        has_stock = pd.to_numeric(i["STOCK REAL"], errors="coerce").fillna(0) > 0
+        reliable = pd.Series(True, index=i.index)
+    else:
+        stock_val = pd.to_numeric(i["STOCK"], errors="coerce")
+        has_stock = (yesno(i["TIENE STOCK"]) == 1) | (stock_val.fillna(0) > 0)
+        reliable = ~(stock_val >= PLACEHOLDER_STOCK)
     cand = i[visible & ~has_stock & reliable].merge(perf[["SKU", "vistas_7d", "carrito_7d"]], on="SKU")
     hot = cand[cand["vistas_7d"] >= t.traffic_no_stock_min_views].sort_values("vistas_7d", ascending=False)
     if len(hot) < t.traffic_no_stock_min_skus:

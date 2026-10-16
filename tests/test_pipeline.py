@@ -264,15 +264,21 @@ def test_quality_checks_are_stored_and_added_to_older_days(env):
     job, drop, history, sku = env
     drop("catalog-daily-2026-04-01.xlsx", [sku("1"), sku("2", STOCK="1000000"), sku("3", STOCK="1000100")])
     job.run()
-    assert job.store.load_manifest("2026-04-01")["quality"] == {"stock_placeholder": 2, "stock_placeholder_pct": 66.67}
+    q0 = job.store.load_manifest("2026-04-01")["quality"]
+    assert {k: q0[k] for k in ("stock_placeholder", "stock_placeholder_pct", "stock_corrected", "stock_source")} == {
+        "stock_placeholder": 2, "stock_placeholder_pct": 66.67, "stock_corrected": False, "stock_source": "skus"}
 
     # A day stored before the checks existed gets them on the next pass, without recomputing rules
     m = job.store.load_manifest("2026-04-01")
     del m["quality"]
     job.store.save_manifest("2026-04-01", m)
     r = job.run()
-    assert r.upgraded == ["2026-04-01"] and not r.catalogs
-    assert job.store.load_manifest("2026-04-01")["quality"]["stock_placeholder"] == 2
+    assert "2026-04-01" in r.upgraded and not r.catalogs
+    q = job.store.load_manifest("2026-04-01")["quality"]
+    assert q["stock_placeholder"] == 2
+    # The placeholder day was re-read for a stock upgrade; its export has no Inventarios sheet,
+    # so it is marked attempted and not retried
+    assert q.get("stock_upgrade_attempted") and not q["stock_corrected"]
     assert job.run().upgraded == []
 
 
@@ -433,3 +439,68 @@ def test_ga4_and_gsc_pass_backfill_in_chunks_and_build_sku_performance(env):
     assert perf.loc["1", "posicion_30d"] == 4.0
     assert job.store.load_index()["perf"]["as_of"] == yesterday
     assert len(job.run().ga4) == 2  # only the refresh window remains
+
+
+def test_stock_source_upgrade_reprocesses_placeholder_days(env):
+    import io
+
+    job, drop, history, sku = env
+    incoming = job.storage.root + "/cemaco-reports/incoming"
+
+    def drop_with_inventory(name, rows, inv_rows):
+        out = io.BytesIO()
+        with pd.ExcelWriter(out, engine="openpyxl") as w:
+            pd.DataFrame(rows).to_excel(w, sheet_name="SKUs", index=False)
+            pd.DataFrame(inv_rows, columns=["Sku", "ProductName", "Total", "MDR", "T004"]).to_excel(
+                w, sheet_name="Inventarios", index=False)
+        with open(f"{incoming}/{name}", "wb") as fh:
+            fh.write(out.getvalue())
+
+    # Day 1 processed by "old code": placeholder STOCK, no Inventarios read → simulate by dropping a
+    # workbook without the sheet first, then replacing it with the full export (same name)
+    drop("catalog-daily-2026-09-22.xlsx", [sku("1", STOCK="1000003"), sku("2", STOCK="1000000")])
+    drop("catalog-daily-2026-09-23.xlsx", [sku("1", STOCK="1000003"), sku("2", STOCK="1000000")])
+    job.run()
+    m = job.store.load_manifest("2026-09-22")
+    assert not m["quality"]["stock_corrected"] and m["summary"]["With Stock %"] == 100.0
+
+    drop_with_inventory("catalog-daily-2026-09-22.xlsx", [sku("1", STOCK="1000003"), sku("2", STOCK="1000000")],
+                        [[1, "A", 1000003, 1000000, 3], [2, "B", 1000000, 1000000, 0]])
+    drop_with_inventory("catalog-daily-2026-09-23.xlsx", [sku("1", STOCK="1000003"), sku("2", STOCK="1000000")],
+                        [[1, "A", 1000003, 1000000, 3], [2, "B", 1000000, 1000000, 0]])
+    r = job.run()  # files changed → normal reprocess picks them up with the Inventarios sheet
+    for day in ("2026-09-22", "2026-09-23"):
+        m = job.store.load_manifest(day)
+        assert m["quality"]["stock_corrected"] and m["summary"]["With Stock %"] == 50.0
+    # Snapshot carries STOCK REAL so recomputes keep the corrected stock
+    snap = job.store.load_snapshot("2026-09-23", columns=["SKU", "STOCK REAL"]).set_index("SKU")
+    assert snap.loc["2", "STOCK REAL"] == 0
+
+
+def test_stock_source_upgrade_step_runs_for_unchanged_files(env, monkeypatch):
+    """Stored day with placeholder + unchanged file → upgrade step re-processes it."""
+    import io
+
+    job, drop, history, sku = env
+    incoming = job.storage.root + "/cemaco-reports/incoming"
+    out = io.BytesIO()
+    with pd.ExcelWriter(out, engine="openpyxl") as w:
+        pd.DataFrame([sku("1", STOCK="1000003"), sku("2", STOCK="1000000")]).to_excel(w, sheet_name="SKUs", index=False)
+        pd.DataFrame([[1, "A", 1000003, 1000000, 3], [2, "B", 1000000, 1000000, 0]],
+                     columns=["Sku", "ProductName", "Total", "MDR", "T004"]).to_excel(w, sheet_name="Inventarios", index=False)
+    with open(f"{incoming}/catalog-daily-2026-09-22.xlsx", "wb") as fh:
+        fh.write(out.getvalue())
+    # First pass with the Inventarios reader disabled = what the old code stored
+    monkeypatch.setattr("pipeline.process.load_inventory_sheet", lambda *a, **k: None)
+    job.run()
+    m = job.store.load_manifest("2026-09-22")
+    assert not m["quality"]["stock_corrected"]
+    # Old code never set the "attempted" marker; drop the one this pass's upgrade attempt left
+    m["quality"].pop("stock_upgrade_attempted", None)
+    job.store.save_manifest("2026-09-22", m)
+    monkeypatch.undo()
+    r = job.run()
+    assert r.upgraded == ["stock 2026-09-22"]
+    m = job.store.load_manifest("2026-09-22")
+    assert m["quality"]["stock_corrected"] and m["summary"]["With Stock %"] == 50.0
+    assert not job.run().upgraded
