@@ -83,10 +83,11 @@ class ResultStore:
         return {"source": f.name, "modified": f.modified.isoformat(), "size": f.size}
 
     # ── run lock ────────────────────────────────────────────────────────────
-    def acquire_lock(self, owner: str, ttl_minutes: int = 90) -> bool:
+    def acquire_lock(self, owner: str, ttl_minutes: int = 20) -> bool:
         """
         Best-effort lease so a long backfill and the next scheduled run never
-        process the same files. A lock older than ttl is treated as abandoned.
+        process the same files. The holder renews it after every file / API day, so a
+        lock older than ttl means its run died (e.g. killed for memory) and is ignored.
         """
         raw = self.storage.read(self._p("lock.json"))
         if raw:

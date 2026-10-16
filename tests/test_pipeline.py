@@ -169,7 +169,7 @@ def test_concurrent_run_is_skipped_and_stale_lock_ignored(env):
     r = job.run()
     assert r.skipped and not r.catalogs
 
-    stale = {"owner": "other-host", "since": (datetime.now(timezone.utc) - timedelta(hours=3)).isoformat()}
+    stale = {"owner": "other-host", "since": (datetime.now(timezone.utc) - timedelta(minutes=25)).isoformat()}
     job.storage.write(lock_path, json.dumps(stale).encode())
     r = job.run()
     assert not r.skipped and r.catalogs == ["2026-04-01"]
