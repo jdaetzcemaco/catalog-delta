@@ -271,7 +271,7 @@ class Job:
                 report.errors.append(f"quality {day}: {exc}")
             self._renew_lock()
 
-    STOCK_UPGRADES_PER_PASS = 4
+    STOCK_UPGRADES_PER_PASS = 2  # each re-process peaks ~2.5 GB on a 4 GB instance
 
     def upgrade_stock_source(self, report: PassReport) -> None:
         """
