@@ -61,3 +61,21 @@ def test_finalize_keeps_first_seen_and_orders_by_severity():
     out = finalize(a, prev, "now")
     assert [x["severity"] for x in out] == ["alta", "media"]
     assert out[0]["first_seen"] == "2026-09-20" and out[1]["first_seen"] == "2026-09-29"
+
+
+def test_traffic_and_organic_drop_rules():
+    from catalog_core.alerts import organic_drop_alerts, traffic_alerts
+
+    info = pd.DataFrame({"SKU": [str(i) for i in range(8)], "VISIBLE": ["Si"] * 8,
+                         "TIENE STOCK": ["No"] * 6 + ["Si", "No"], "STOCK": ["0"] * 6 + ["5", "1000000"]})
+    perf = pd.DataFrame({"SKU": [str(i) for i in range(8)], "vistas_7d": [100] * 8, "carrito_7d": [3] * 8,
+                         "organic_sessions_7d": [5] * 8, "organic_sessions_7d_prev": [40] * 8})
+    out = traffic_alerts("d", perf, info, T)
+    # 6 visible, no stock, reliable; "6" has stock and "7" is a placeholder -> excluded
+    assert out[0].count == 6 and "7" not in out[0].skus and out[0].severity == "alta"
+    assert traffic_alerts("d", perf.assign(vistas_7d=10), info, T) == []
+
+    status = pd.DataFrame({"SKU": ["0", "1"], "listo": [True, True]})
+    drops = organic_drop_alerts("d", {"nav": {"name": "Navidad"}}, {"nav": status}, perf, T)
+    assert drops[0].count == 2 and "Navidad" in drops[0].title
+    assert organic_drop_alerts("d", {}, {"nav": status}, perf.assign(organic_sessions_7d_prev=10), T) == []

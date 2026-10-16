@@ -29,7 +29,7 @@ Both use Python 3.12 and the pinned `requirements.txt` (verified with the full p
    |---|---|---|---|
    | `GRAPH_DRIVE_USER` | ✓ | ✓ | account whose OneDrive holds `cemaco-reports/` |
    | `GRAPH_CLIENT_SECRET` | ✓ | ✓ | client secret **value** |
-   | `GCP_SERVICE_ACCOUNT_JSON` | ✓ | | whole key file on one line (or leave empty for now) |
+   | `GOOGLE_SERVICE_ACCOUNT_JSON` | ✓ | | the Google service-account key JSON, pasted whole (GA4 Viewer + Search Console user + history sheet); leave empty to skip Google |
    | `APP_PASSWORD` | | ✓ | password for the app login |
    | `RENDER_API_KEY` | | ✓ | optional, see below |
    | `RENDER_CRON_JOB_ID` | | ✓ | optional, the job's ID (`crn-…`, in its URL) |

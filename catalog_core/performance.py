@@ -134,6 +134,6 @@ def sku_performance(sku_map: pd.DataFrame, item_perf: pd.DataFrame, landing_perf
     for extra in (item_perf, landing_perf, gsc_perf):
         if extra is not None and not extra.empty:
             out = out.merge(extra.drop(columns=["as_of"], errors="ignore"), on="SKU", how="left")
-    num = [c for c in out.columns if re.search(r"_(7|30|90)d(_prev)?$", c)]
+    num = [c for c in out.columns if re.search(r"_(7|30|90)d(_prev)?$", c) and not c.startswith("posicion")]
     out[num] = out[num].fillna(0)
     return out

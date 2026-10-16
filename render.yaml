@@ -17,6 +17,11 @@ envVarGroups:
         value: cemaco-reports/incoming
       - key: PROCESSED_DIR
         value: cemaco-reports/processed
+      # Google Analytics 4 property and Search Console property (read by the job only)
+      - key: GA4_PROPERTY_ID
+        value: "268360644"
+      - key: GSC_SITE
+        value: sc-domain:cemaco.com
 
 services:
   # Processing job: every 30 min, processes whatever is new in OneDrive incoming/.
@@ -38,7 +43,8 @@ services:
         sync: false
       - key: GRAPH_CLIENT_SECRET
         sync: false
-      - key: GCP_SERVICE_ACCOUNT_JSON
+      # Google service account key JSON (GA4 Viewer, Search Console user, history sheet)
+      - key: GOOGLE_SERVICE_ACCOUNT_JSON
         sync: false
 
   # Web app: reads stored results only (never the raw exports).

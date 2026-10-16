@@ -139,12 +139,27 @@ if len(lost):
     ui.show_table(lost[["SKU", "perdio", "score", "ultima_vez_visible"]], key="camp_lost",
                   info=data.sku_info(day), download_name=f"{lid}_regresiones_{day}", filters=False)
 
+perf = data.perf()
+if perf is not None and not perf.empty:
+    pcols = ["SKU", "vistas_30d", "carrito_30d", "compras_30d", "organic_sessions_30d", "clicks_30d", "posicion_30d"]
+    lp = perf[[c for c in pcols if c in perf.columns]]
+    status = status.merge(lp, on="SKU", how="left")
+    lost = lost.merge(lp, on="SKU", how="left") if len(lost) else lost
+    st.subheader("Tráfico de la lista (30 días)")
+    pk_ = st.columns(4)
+    ui.kpi(pk_[0], "Vistas", int(status["vistas_30d"].fillna(0).sum()))
+    ui.kpi(pk_[1], "Agregados al carrito", int(status["carrito_30d"].fillna(0).sum()))
+    ui.kpi(pk_[2], "Sesiones orgánicas", int(status["organic_sessions_30d"].fillna(0).sum()))
+    ui.kpi(pk_[3], "SKUs sin una vista", int((status["vistas_30d"].fillna(0) == 0).sum()), inverse=True,
+           help="SKUs de la lista sin vistas en 30 días (visibles o no)")
+
 st.subheader("SKUs")
 view = st.segmented_control("Ver", ["Pendientes", "Listos", "Todos"], default="Pendientes", key="camp_view",
                             label_visibility="collapsed") or "Pendientes"
 shown = status if view == "Todos" else status[status["listo"] == (view == "Listos")]
 cols = ["SKU", "listo", "visible", "habilitado", "contenido", "categoria_real", "stock", "stock_confiable",
-        "score", "ultima_vez_visible", "dias_visible_seguidos", "salida_flujo", "fin_dat_log", "equipo", "en_catalogo"]
+        "score", "vistas_30d", "carrito_30d", "organic_sessions_30d", "clicks_30d", "posicion_30d",
+        "ultima_vez_visible", "dias_visible_seguidos", "salida_flujo", "fin_dat_log", "equipo", "en_catalogo"]
 ui.show_table(shown[[c for c in cols if c in shown.columns]], key=f"camp_{view}", info=data.sku_info(day),
               download_name=f"{lid}_{view.lower()}_{day}",
               empty="Ningún SKU en esta vista." if view != "Pendientes" else "No hay pendientes: todo listo.")

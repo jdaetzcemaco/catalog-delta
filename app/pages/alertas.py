@@ -7,7 +7,8 @@ from app import data, ui
 
 SEV = {"alta": ("🔴", "Alta"), "media": ("🟠", "Media"), "baja": ("🔵", "Baja")}
 PAGE_LINK = {"campanas": ("app/pages/campanas.py", "Campañas"), "cambios": ("app/pages/cambios.py", "Cambios del día"),
-             "inventario": ("app/pages/inventario.py", "Inventario Omnicanal"), "cargar": ("app/pages/cargar.py", "Cargar archivos")}
+             "inventario": ("app/pages/inventario.py", "Inventario Omnicanal"), "cargar": ("app/pages/cargar.py", "Cargar archivos"),
+             "rendimiento": ("app/pages/rendimiento.py", "Rendimiento")}
 
 st.title("Alertas")
 days = data.alert_days()

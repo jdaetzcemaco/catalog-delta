@@ -29,6 +29,18 @@ LABELS = {
     "falta_descripcion": "Falta descripción", "ultima_vez_visible": "Última vez visible",
     "primera_vez_visto": "Primera vez visto", "dias_visible_seguidos": "Días visible seguidos",
     "salida_flujo": "Salida del flujo", "fin_dat_log": "Fin Dat_Log", "equipo": "Equipo", "perdio": "Perdió",
+    # performance (GA4 / Search Console)
+    "vistas_7d": "Vistas 7d", "vistas_30d": "Vistas 30d", "vistas_90d": "Vistas 90d", "vistas_7d_prev": "Vistas 7d ant.",
+    "carrito_7d": "Carrito 7d", "carrito_30d": "Carrito 30d", "carrito_90d": "Carrito 90d",
+    "compras_7d": "Compras 7d", "compras_30d": "Compras 30d", "compras_90d": "Compras 90d",
+    "ingresos_7d": "Ingresos 7d", "ingresos_30d": "Ingresos 30d", "ingresos_90d": "Ingresos 90d",
+    "sessions_7d": "Sesiones 7d", "sessions_30d": "Sesiones 30d", "sessions_90d": "Sesiones 90d",
+    "organic_sessions_7d": "Orgánicas 7d", "organic_sessions_30d": "Orgánicas 30d", "organic_sessions_90d": "Orgánicas 90d",
+    "organic_sessions_7d_prev": "Orgánicas 7d ant.", "clicks_7d": "Clics Google 7d", "clicks_30d": "Clics Google 30d",
+    "clicks_90d": "Clics Google 90d", "impressions_7d": "Impresiones 7d", "impressions_30d": "Impresiones 30d",
+    "impressions_90d": "Impresiones 90d", "clicks_7d_prev": "Clics 7d ant.", "posicion_30d": "Posición Google 30d",
+    "tasa_carrito_30d": "Tasa carrito 30d", "tasa_compra_30d": "Tasa compra 30d", "ultimo_dia_vistas": "Última vista",
+    "product_id": "Product ID", "STOCK": "Stock", "PRECIO": "Precio", "TIENE STOCK": "Tiene stock",
 }
 BOOL_COLS = {"listo", "en_catalogo", "visible", "habilitado", "contenido", "categoria_real", "stock",
              "stock_confiable", "falta_imagen", "falta_precio", "falta_descripcion"}
@@ -99,6 +111,14 @@ def _column_config(df: pd.DataFrame) -> dict:
             cfg[c] = st.column_config.LinkColumn("Página", display_text="Ver ↗", width="small")
         elif c in ("ultima_vez_visible", "primera_vez_visto", "salida_flujo"):
             cfg[c] = st.column_config.DateColumn(label, format="DD/MM/YYYY")
+        elif c == "ultimo_dia_vistas":
+            cfg[c] = st.column_config.DateColumn(label, format="DD/MM/YYYY")
+        elif c.startswith("ingresos_"):
+            cfg[c] = st.column_config.NumberColumn(label, format="Q%,.0f")
+        elif c.startswith("tasa_"):
+            cfg[c] = st.column_config.NumberColumn(label, format="%.1%")
+        elif c == "posicion_30d":
+            cfg[c] = st.column_config.NumberColumn(label, format="%.1f")
         elif c == "fin_dat_log":
             cfg[c] = st.column_config.DatetimeColumn(label, format="DD/MM/YYYY HH:mm")
         elif c == "score":

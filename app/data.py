@@ -107,6 +107,16 @@ def write_list(meta: dict) -> None:
                           json.dumps(meta, ensure_ascii=False, indent=2).encode())
 
 
+# ── performance (GA4 + Search Console) ─────────────────────────────────────
+@st.cache_data(ttl=TTL, show_spinner="Cargando rendimiento…")
+def perf() -> pd.DataFrame | None:
+    return store().load_perf() if index().get("perf") else None
+
+
+def perf_meta() -> dict:
+    return index().get("perf") or {}
+
+
 # ── alerts ──────────────────────────────────────────────────────────────────
 def alert_days() -> list[str]:
     return sorted(index()["alerts"].get("days", []), reverse=True)

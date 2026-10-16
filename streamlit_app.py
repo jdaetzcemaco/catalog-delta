@@ -72,7 +72,10 @@ pages = {
         st.Page("app/pages/historial.py", title="Historial", icon="📈"),
         st.Page("app/pages/alertas.py", title="Alertas", icon="🚨"),
     ],
-    "Comercial": [st.Page("app/pages/campanas.py", title="Campañas", icon="🎯")],
+    "Comercial": [
+        st.Page("app/pages/campanas.py", title="Campañas", icon="🎯"),
+        st.Page("app/pages/rendimiento.py", title="Rendimiento", icon="📊"),
+    ],
     "Equipos": [st.Page("app/pages/productividad.py", title="Productividad", icon="👥")],
     "Datos": [st.Page("app/pages/cargar.py", title="Cargar archivos", icon="📤")],
 }

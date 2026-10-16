@@ -20,7 +20,7 @@ import pandas as pd
 
 from catalog_core import load_catalog, load_productivity, run_catalog
 from catalog_core.alerts import (AlertThresholds, catalog_alerts, export_late_alert, finalize, list_alerts,
-                                 new_visible_weak_alert, tipo_c_stuck_alert)
+                                 new_visible_weak_alert, organic_drop_alerts, tipo_c_stuck_alert, traffic_alerts)
 from catalog_core.campaigns import readiness
 from catalog_core.productivity import detect_report
 from catalog_core.sku_history import rebuild_visible_history, update_visible_history, update_workflow_dates
@@ -571,6 +571,10 @@ class Job:
                 earlier = [d for d in e["status_days"] if d < day]
                 prev_statuses[lid] = self.store.load_list_status(lid, max(earlier)) if earlier else None
             alerts += list_alerts(day, index["lists"], statuses, prev_statuses, t)
+            perf = self.store.load_perf() if index.get("perf") else None
+            if perf is not None:
+                alerts += traffic_alerts(day, perf, self.store.load_sku_info(day), t)
+                alerts += organic_drop_alerts(day, index["lists"], statuses, perf, t)
 
             previous_alerts = (self.store.load_alerts(prev_day) or {}).get("alerts") if prev_day else None
             payload = {"day": day, "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),

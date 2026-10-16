@@ -29,6 +29,10 @@ class AlertThresholds:
     tipo_c_min_days: int = 14             # Tipo C with stock older than this (days in catalog)
     export_late_days: int = 1             # no catalog export for more than this many days
     new_visible_weak_min: int = 20        # new visible SKUs with score < 80 to alert
+    traffic_no_stock_min_views: int = 50  # visible SKU with this many views in 7d and no stock
+    traffic_no_stock_min_skus: int = 5    # alert only when at least this many SKUs qualify
+    organic_drop_pct: float = 50.0        # organic sessions 7d vs previous 7d, list SKUs
+    organic_drop_min_sessions: int = 20   # previous-week organic sessions needed to judge a drop
 
 
 @dataclass
@@ -164,6 +168,53 @@ def export_late_alert(today: str, latest_day: str | None, t: AlertThresholds) ->
         title=f"No ha llegado el export del catálogo: el último es del {latest_day} ({late} días)",
         detail="Revisa el correo de STEP y la carpeta incoming de OneDrive.", day=today, page="cargar",
         count=late, context={"latest_day": latest_day})]
+
+
+def traffic_alerts(day: str, perf: pd.DataFrame | None, info: pd.DataFrame | None, t: AlertThresholds) -> list[Alert]:
+    """Visible SKUs that customers look at but cannot buy (GA4 views, no stock)."""
+    if perf is None or perf.empty or info is None or info.empty or "TIENE STOCK" not in info.columns:
+        return []
+    from .quality import PLACEHOLDER_STOCK
+    from .text import yesno
+
+    i = info[["SKU", "VISIBLE", "TIENE STOCK", "STOCK"]].drop_duplicates("SKU")
+    visible = yesno(i["VISIBLE"]) == 1
+    stock_val = pd.to_numeric(i["STOCK"], errors="coerce")
+    has_stock = (yesno(i["TIENE STOCK"]) == 1) | (stock_val.fillna(0) > 0)
+    reliable = ~(stock_val >= PLACEHOLDER_STOCK)
+    cand = i[visible & ~has_stock & reliable].merge(perf[["SKU", "vistas_7d", "carrito_7d"]], on="SKU")
+    hot = cand[cand["vistas_7d"] >= t.traffic_no_stock_min_views].sort_values("vistas_7d", ascending=False)
+    if len(hot) < t.traffic_no_stock_min_skus:
+        return []
+    return [Alert(
+        id="traffic:views_no_stock", rule="views_no_stock", severity="alta",
+        title=f"{len(hot)} SKUs visibles con tráfico (≥ {t.traffic_no_stock_min_views} vistas en 7 días) y sin stock",
+        detail=f"{int(hot['vistas_7d'].sum()):,} vistas y {int(hot['carrito_7d'].sum()):,} agregados al carrito "
+               "en 7 días sobre productos que no se pueden comprar.",
+        day=day, page="rendimiento", count=len(hot), skus=hot["SKU"].astype(str).tolist())]
+
+
+def organic_drop_alerts(day: str, lists: dict[str, dict], statuses: dict[str, pd.DataFrame],
+                        perf: pd.DataFrame | None, t: AlertThresholds) -> list[Alert]:
+    """Campaign-list SKUs whose organic sessions fell sharply week over week."""
+    if perf is None or perf.empty or "organic_sessions_7d_prev" not in perf.columns:
+        return []
+    out = []
+    for lid, status in statuses.items():
+        p = perf[perf["SKU"].isin(status["SKU"])]
+        prev = p["organic_sessions_7d_prev"]
+        drop = (prev - p["organic_sessions_7d"]) / prev.where(prev > 0)
+        hit = p[(prev >= t.organic_drop_min_sessions) & (drop * 100 >= t.organic_drop_pct)]
+        if hit.empty:
+            continue
+        name = lists.get(lid, {}).get("name") or lid
+        out.append(Alert(
+            id=f"organic_drop:{lid}", rule="organic_drop", severity="media",
+            title=f"{len(hit)} SKUs de «{name}» perdieron ≥ {t.organic_drop_pct:.0f}% de sesiones orgánicas esta semana",
+            detail=f"De {int(hit['organic_sessions_7d_prev'].sum()):,} a {int(hit['organic_sessions_7d'].sum()):,} "
+                   "sesiones orgánicas (7 días vs 7 anteriores).",
+            day=day, page="rendimiento", count=len(hit), skus=hit["SKU"].astype(str).tolist(), context={"list": lid}))
+    return out
 
 
 # ── assembly ────────────────────────────────────────────────────────────────

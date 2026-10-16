@@ -14,7 +14,7 @@ from pipeline.storage import LocalStorage
 
 AppTest = pytest.importorskip("streamlit.testing.v1").AppTest
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-PAGES = ["resumen", "cambios", "inventario", "historial", "productividad", "cargar", "campanas", "alertas"]
+PAGES = ["resumen", "cambios", "inventario", "historial", "productividad", "cargar", "campanas", "alertas", "rendimiento"]
 
 
 def _xlsx(df: pd.DataFrame, sheet: str) -> bytes:
@@ -53,7 +53,21 @@ def store_root(tmp_path, make_sku, monkeypatch):
     (root / "cemaco-reports" / "incoming" / "lists" / "navidad.json").write_text(json.dumps(
         {"name": "Navidad", "skus": ["1", "2", "9"], "status": "active", "owner": "ana",
          "created_at": "2026-04-02T12:00:00+00:00"}))
-    Job(Settings(storage="local", local_root=str(root)), LocalStorage(str(root))).run()
+    job = Job(Settings(storage="local", local_root=str(root)), LocalStorage(str(root)))
+    job.run()
+    # A small performance file so Rendimiento and the Campañas traffic block render
+    perf = pd.DataFrame({"SKU": ["1", "2", "4"], "product_id": ["100"] * 3})
+    for w in ("7d", "30d", "90d"):
+        for m in ("vistas", "carrito", "compras", "ingresos", "sessions", "organic_sessions", "clicks", "impressions"):
+            perf[f"{m}_{w}"] = [10.0, 0.0, 5.0]
+    perf["vistas_7d_prev"] = perf["organic_sessions_7d_prev"] = perf["clicks_7d_prev"] = 1.0
+    perf["posicion_30d"] = [3.5, None, 12.0]
+    perf["tasa_carrito_30d"] = perf["tasa_compra_30d"] = 0.1
+    perf["ultimo_dia_vistas"] = pd.Timestamp("2026-04-02")
+    job.store.save_perf(perf)
+    index = job.store.load_index()
+    index["perf"] = {"as_of": "2026-04-02", "catalog_day": "2026-04-02", "skus": 3, "skus_with_views_30d": 2}
+    job.store.save_index(index)
 
     monkeypatch.setenv("STORAGE", "local")
     monkeypatch.setenv("LOCAL_ROOT", str(root))
