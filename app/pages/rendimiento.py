@@ -49,7 +49,9 @@ if info is not None and "TIENE STOCK" in info.columns:
         flags["con_stock"] = (yesno(flags["TIENE STOCK"]) == 1) | (stock_val.fillna(0) > 0)
         flags["stock_confiable"] = ~(stock_val >= PLACEHOLDER_STOCK)
     flags = flags[["SKU", "visible", "con_stock", "stock_confiable"]]
-joined = perf.merge(flags, on="SKU", how="left") if flags is not None else perf
+# The job's perf file carries its own visible/con_stock (for CRO); the selected day's flags win
+joined = (perf.drop(columns=[c for c in flags.columns if c != "SKU" and c in perf.columns])
+          .merge(flags, on="SKU", how="left")) if flags is not None else perf
 
 base_cols = ["SKU", f"vistas_{W}", f"carrito_{W}", f"compras_{W}", f"ingresos_{W}", f"organic_sessions_{W}",
              f"clicks_{W}", "posicion_30d", "tasa_carrito_30d", "tasa_compra_30d", "ultimo_dia_vistas"]

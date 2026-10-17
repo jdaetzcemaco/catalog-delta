@@ -64,6 +64,8 @@ def store_root(tmp_path, make_sku, monkeypatch):
     perf["posicion_30d"] = [3.5, None, 12.0]
     perf["tasa_carrito_30d"] = perf["tasa_compra_30d"] = 0.1
     perf["ultimo_dia_vistas"] = pd.Timestamp("2026-04-02")
+    # catalog context the job adds for CRO (same names as the page's own flags)
+    perf["visible"], perf["con_stock"], perf["NIVEL 1"] = [True, False, True], [True, False, False], "Hogar"
     job.store.save_perf(perf)
     cro = pd.DataFrame({"SKU": ["1", "4"], "grupo": ["fuga_conversion", "joya_oculta"], "motivo": ["m", "m"],
                         "impacto": [10.0, 2.0], "NIVEL 1": ["Hogar", "Hogar"], "vistas_ventana": [500, 40],
