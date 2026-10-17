@@ -414,6 +414,19 @@ def test_ga4_and_gsc_pass_backfill_in_chunks_and_build_sku_performance(env):
             return pd.DataFrame({"day": [day], "itemId": ["100"], "itemVariant": ["1"], "SKU": ["1"], "itemName": ["A"],
                                  "itemsViewed": [3], "itemsAddedToCart": [1], "itemsPurchased": [0], "itemRevenue": [0.0]})
 
+        def window_rates(self, start, end):
+            return pd.DataFrame({"SKU": ["1"], "itemsViewed": [400.0], "cartToViewRate": [0.1], "purchaseToViewRate": [0.03]})
+
+        def window_channel_rates(self, start, end):
+            return pd.DataFrame({"SKU": ["1", "1"], "bucket": ["organico", "pagado_social"], "views": [300.0, 100.0],
+                                 "buyers": [9.0, 1.0]})
+
+        def channels_report(self, day):
+            return pd.DataFrame({"day": [day, day], "itemVariant": ["1", "1"], "SKU": ["1", "1"],
+                                 "sessionDefaultChannelGroup": ["Organic Search", "Paid Social"],
+                                 "bucket": ["organico", "pagado_social"], "itemsViewed": [2, 1],
+                                 "itemsAddedToCart": [1, 0], "itemsPurchased": [0, 0], "itemRevenue": [0.0, 0.0]})
+
         def landing_report(self, day):
             return pd.DataFrame({"day": [day], "landingPagePlusQueryString": ["/a-1/p"],
                                  "sessionDefaultChannelGroup": ["Organic Search"], "sessions": [2],
@@ -436,6 +449,12 @@ def test_ga4_and_gsc_pass_backfill_in_chunks_and_build_sku_performance(env):
     # Both SKUs belong to the test fixture's product? conftest has no PRODUCT ID → map by SKU only
     assert perf.loc["1", "organic_sessions_7d"] == 2 * 7 and perf.loc["1", "clicks_30d"] == 28  # GSC lags 3 days
     assert perf.loc["1", "vistas_30d"] == 3 * 30 and perf.loc["2", "vistas_30d"] == 0
+    # Channel split and catalog context are on the performance file
+    assert perf.loc["1", "vistas_30d_pagado_social"] == 30 and perf.loc["1", "vistas_30d_organico"] == 60
+    assert perf.loc["1", "NIVEL 1"] == "Hogar" and bool(perf.loc["1", "visible"]) and perf.loc["1", "content_score"] == 95
+    assert perf.loc["1", "vistas_ventana"] == 400 and perf.loc["1", "paid_buy_rate"] == 0.01
+    cro, summary = job.store.load_cro()
+    assert cro is not None and summary["channel_totals"][0]["bucket"] == "organico"
     assert perf.loc["1", "posicion_30d"] == 4.0
     assert job.store.load_index()["perf"]["as_of"] == yesterday
     assert len(job.run().ga4) == 2  # only the refresh window remains

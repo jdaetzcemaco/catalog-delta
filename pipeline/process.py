@@ -489,33 +489,50 @@ class Job:
             return
         from catalog_core.performance import daily_item_frame, daily_landing_frame
 
+        from catalog_core.performance import daily_channel_frame
+
         s = self.settings
         index = self.store.load_index()
         meta = index["ga4"]
         stored = set(meta.get("days", []))
+        stored_ch = set(meta.get("channel_days", []))
         todo = self._days_to_pull(stored, s.ga4_refresh_days, s.ga4_backfill_days, lag_days=1)
-        new_items, new_landing = {}, {}
-        for day in todo:
+        todo_ch = self._days_to_pull(stored_ch, s.ga4_refresh_days, s.ga4_backfill_days, lag_days=1)
+        days = sorted(set(todo) | set(todo_ch), reverse=True)[:self.PERF_MAX_DAYS_PER_PASS]
+        new_items, new_landing, new_channels = {}, {}, {}
+        for day in days:
             try:
-                items = self.ga4.items_report(day)
-                landing = self.ga4.landing_report(day)
-                self.store.save_ga4_day(day, items, landing)
-                new_items[day], new_landing[day] = items, landing
-                stored.add(day)
-                report.ga4.append(day)
-                log.info("GA4 %s: %s item rows, %s landing rows, quota left %s", day, len(items), len(landing),
-                         items.attrs.get("quota_tokens_remaining"))
+                if day in todo:
+                    items = self.ga4.items_report(day)
+                    landing = self.ga4.landing_report(day)
+                    self.store.save_ga4_day(day, items, landing)
+                    new_items[day], new_landing[day] = items, landing
+                    stored.add(day)
+                    report.ga4.append(day)
+                if day in todo_ch:
+                    channels = self.ga4.channels_report(day)
+                    self.store.save_ga4_channels(day, channels)
+                    new_channels[day] = channels
+                    stored_ch.add(day)
+                    if day not in todo:
+                        report.ga4.append(f"{day} (canales)")
+                log.info("GA4 %s: %s", day, ", ".join(f"{k} {len(v[day]):,} rows" for k, v in
+                                                     (("items", new_items), ("landing", new_landing),
+                                                      ("channels", new_channels)) if day in v))
             except Exception as exc:
                 log.exception("GA4 %s failed", day)
                 report.errors.append(f"ga4 {day}: {exc}")
                 break  # quota or auth problems: stop for this pass, try again next run
             self._renew_lock()
-        if not new_items:
+        if not (new_items or new_channels):
             return
-        as_of = todo[0]
-        self._merge_daily("item", daily_item_frame(new_items), as_of)
-        self._merge_daily("landing", daily_landing_frame(new_landing), as_of)
-        meta["days"], meta["as_of"] = sorted(stored), as_of
+        as_of = max(stored) if stored else days[0]
+        if new_items:
+            self._merge_daily("item", daily_item_frame(new_items), as_of)
+            self._merge_daily("landing", daily_landing_frame(new_landing), as_of)
+        if new_channels:
+            self._merge_daily("channel", daily_channel_frame(new_channels), as_of)
+        meta["days"], meta["channel_days"], meta["as_of"] = sorted(stored), sorted(stored_ch), as_of
         self.store.save_index(index)
         self._perf_dirty = True
 
@@ -551,6 +568,30 @@ class Job:
         self.store.save_index(index)
         self._perf_dirty = True
 
+    def _cro_window(self, index: dict, as_of: str) -> pd.DataFrame | None:
+        """
+        GA4 user-based rates over the 30 days ending `as_of` (two reports, ~40 s), pulled
+        once per as_of and stored; reused from storage when GA4 is not configured here.
+        """
+        from catalog_core.cro import window_frame
+
+        meta = index.setdefault("ga4", {})
+        if self.ga4 is not None and meta.get("window_as_of") != as_of:
+            try:
+                start = (pd.Timestamp(as_of) - pd.Timedelta(days=29)).date().isoformat()
+                rates = self.ga4.window_rates(start, as_of)
+                self._renew_lock()
+                channel_rates = self.ga4.window_channel_rates(start, as_of)
+                self._renew_lock()
+                self.store.save_window("rates", rates)
+                self.store.save_window("channel_rates", channel_rates)
+                meta["window_as_of"] = as_of
+                log.info("GA4 30-day window %s..%s: %s SKUs with rates", start, as_of, f"{len(rates):,}")
+            except Exception as exc:
+                log.exception("GA4 window rates failed")
+                return None
+        return window_frame(self.store.load_window("rates"), self.store.load_window("channel_rates"))
+
     def _merge_daily(self, name: str, fresh: pd.DataFrame, as_of: str) -> None:
         from catalog_core.performance import merge_days
 
@@ -559,15 +600,18 @@ class Job:
 
     def refresh_performance(self, report: PassReport) -> None:
         """Rebuild the per-SKU performance file the app reads, after new GA4/GSC days."""
-        if not getattr(self, "_perf_dirty", False):
-            return
-        from catalog_core.performance import (GSC_METRICS, LANDING_METRICS, item_aggregates, rolling_aggregates,
-                                              sku_performance)
-
         index = self.store.load_index()
         days = sorted(index["catalog"])
-        if not days:
+        if not days or not (index["ga4"].get("as_of") or index["gsc"].get("as_of")):
             return
+        stale = (index.get("perf") or {}).get("catalog_day") != days[-1] or "cro" not in (index.get("perf") or {})
+        if not (getattr(self, "_perf_dirty", False) or stale):
+            return
+        from catalog_core import build_flags
+        from catalog_core.cro import classify, content_vs_conversion, window_frame
+        from catalog_core.performance import (GSC_METRICS, LANDING_METRICS, channel_aggregates, channel_totals,
+                                              item_aggregates, rolling_aggregates, sku_performance)
+
         try:
             as_of = max(filter(None, [index["ga4"].get("as_of"), index["gsc"].get("as_of")]))
             item_daily = self.store.load_daily("item")
@@ -583,15 +627,41 @@ class Job:
                     w=("w", "sum"), i=("impressions", "sum"))
                 gsc = gsc.merge((pos["w"] / pos["i"].where(pos["i"] > 0)).round(1).rename("posicion_30d").reset_index(),
                                 on="SKU", how="left")
-            sku_map = self.store.load_snapshot(days[-1], columns=["SKU", "PRODUCT ID"])
-            perf = sku_performance(sku_map, item, landing, gsc)
+            channel_daily = self.store.load_daily("channel")
+            channels = channel_aggregates(channel_daily, as_of) if channel_daily is not None else None
+            # Catalog context for the latest day (category, visibility, real stock, content score, price)
+            snap = self.store.load_snapshot(days[-1])
+            flags = build_flags(snap)
+            ctx = pd.DataFrame({"SKU": snap["SKU"].values, "PRODUCT ID": snap.get("PRODUCT ID", pd.Series(index=snap.index)).values,
+                                "NIVEL 1": snap.get("NIVEL 1", pd.Series(index=snap.index)).values,
+                                "visible": (flags["is_visible"] == 1).values, "con_stock": (flags["has_stock"] == 1).values,
+                                "content_score": flags["content_score"].values,
+                                "precio": pd.to_numeric(snap.get("PRECIO", pd.Series(index=snap.index)), errors="coerce").values})
+            del snap, flags
+            perf = sku_performance(ctx[["SKU", "PRODUCT ID"]], item, landing, gsc)
+            if channels is not None and not channels.empty:
+                perf = perf.merge(channels, on="SKU", how="left")
+                ch_cols = [c for c in channels.columns if c != "SKU"]
+                perf[ch_cols] = perf[ch_cols].fillna(0)
+            perf = perf.merge(ctx.drop(columns=["PRODUCT ID"]), on="SKU", how="left")
+            window = self._cro_window(index, as_of)
+            if window is not None and not window.empty:
+                perf = perf.merge(window, on="SKU", how="left")
             self.store.save_perf(perf)
+            cro = classify(perf)
+            totals = channel_totals(channel_daily, as_of) if channel_daily is not None else pd.DataFrame()
+            summary = {"as_of": as_of, "catalog_day": days[-1],
+                       "groups": cro["grupo"].value_counts().to_dict() if not cro.empty else {},
+                       "content_vs_conversion": content_vs_conversion(perf).to_dict("records"),
+                       "channel_totals": totals.to_dict("records")}
+            self.store.save_cro(cro, summary)
             index["perf"] = {"as_of": as_of, "catalog_day": days[-1], "skus": int(len(perf)),
-                             "skus_with_views_30d": int((item["vistas_30d"] > 0).sum()) if not item.empty else 0}
+                             "skus_with_views_30d": int((item["vistas_30d"] > 0).sum()) if not item.empty else 0,
+                             "cro": summary["groups"], "has_channels": channels is not None and not channels.empty}
             self.store.save_index(index)
             self._perf_dirty = False
-            log.info("Performance as of %s: %s SKUs, %s with views in 30d", as_of, f"{len(perf):,}",
-                     index["perf"]["skus_with_views_30d"])
+            log.info("Performance as of %s: %s SKUs, %s with views in 30d; CRO %s", as_of, f"{len(perf):,}",
+                     index["perf"]["skus_with_views_30d"], summary["groups"])
         except Exception as exc:
             log.exception("Performance aggregates failed")
             report.errors.append(f"performance: {exc}")

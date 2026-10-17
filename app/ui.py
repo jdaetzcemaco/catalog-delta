@@ -42,6 +42,12 @@ LABELS = {
     "tasa_carrito_30d": "Tasa carrito 30d", "tasa_compra_30d": "Tasa compra 30d", "ultimo_dia_vistas": "Última vista",
     "product_id": "Product ID", "STOCK": "Stock", "PRECIO": "Precio", "TIENE STOCK": "Tiene stock",
     "STOCK REAL": "Stock real", "BODEGAS CON STOCK": "Bodegas con stock",
+    # CRO
+    "motivo": "Motivo", "impacto": "Impacto", "vistas_ventana": "Vistas 30d", "tasa_carrito": "Agrega al carrito",
+    "cat_cart_rate": "Categoría: carrito", "tasa_compra": "Compra", "cat_buy_rate": "Categoría: compra",
+    "compra_por_carrito": "Compra / carrito", "cat_buy_per_cart": "Categoría: compra / carrito",
+    "paid_views": "Vistas pauta 30d", "tasa_compra_pagado": "Compra desde pauta", "cat_paid_buy_rate": "Categoría: compra pauta",
+    "content_score": "Score",
 }
 BOOL_COLS = {"listo", "en_catalogo", "visible", "habilitado", "contenido", "categoria_real", "stock",
              "stock_confiable", "falta_imagen", "falta_precio", "falta_descripcion"}
@@ -116,13 +122,13 @@ def _column_config(df: pd.DataFrame) -> dict:
             cfg[c] = st.column_config.DateColumn(label, format="DD/MM/YYYY")
         elif c.startswith("ingresos_"):
             cfg[c] = st.column_config.NumberColumn(label, format="Q%,.0f")
-        elif c.startswith("tasa_"):
+        elif c.startswith(("tasa_", "cat_")) or c == "compra_por_carrito":
             cfg[c] = st.column_config.NumberColumn(label, format="%.1%")
         elif c == "posicion_30d":
             cfg[c] = st.column_config.NumberColumn(label, format="%.1f")
         elif c == "fin_dat_log":
             cfg[c] = st.column_config.DatetimeColumn(label, format="DD/MM/YYYY HH:mm")
-        elif c == "score":
+        elif c in ("score", "content_score"):
             cfg[c] = st.column_config.ProgressColumn(label, min_value=0, max_value=MAX_SCORE, format="%d")
         elif c.startswith("content_score"):
             cfg[c] = st.column_config.ProgressColumn(label, min_value=0, max_value=MAX_SCORE, format="%d")

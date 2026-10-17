@@ -36,3 +36,19 @@ fuente en esa corrida y se reintenta en la siguiente.
 
 GA4 recorta filas de muy bajo volumen y cierra el día 24–48 h después: un cero en vistas no es un
 dato duro, por eso ninguna regla alerta por "cero" de un solo día.
+
+## Canales y CRO
+
+- **Canal por SKU**: el job baja también `itemVariant × sessionDefaultChannelGroup` por día y lo
+  agrupa en *orgánico*, *pagado Google* (Search, Shopping, PMax, Display, Video), *pagado social*,
+  *directo* y *otros*. `perf/sku_perf.parquet` lleva `vistas/carrito/compras/ingresos_30d_<canal>`.
+- **Tasas por persona**: `itemsAddedToCart` / `itemsPurchased` cuentan **unidades** (50 cajas de piso
+  = 50), así que el CRO usa las tasas de GA4 `cartToViewRate` y `purchaseToViewRate` (personas que
+  agregaron / compraron ÷ personas que vieron) sobre una ventana de 30 días, una vez al día
+  (`perf/window_rates.parquet`, `perf/window_channel_rates.parquet`), topadas en 100 %.
+- **Clasificación** (`catalog_core/cro.py`, resultado en `perf/cro.parquet`): cada SKU físico se
+  compara con su Nivel 1; tasas ajustadas por volumen (bayes empírico, 100 vistas a la tasa de la
+  categoría). Grupos: fuga de conversión, carrito sin compra, pagado sin retorno, joya oculta,
+  orgánico en riesgo, tráfico sin stock; umbrales en `CROThresholds`.
+- **Página CRO**: grupos con motivo, impacto estimado y acción sugerida; fijar SKUs en la lista
+  «En la mira» (se evalúa a diario en Campañas); contenido vs conversión; embudo por canal.

@@ -14,7 +14,7 @@ from pipeline.storage import LocalStorage
 
 AppTest = pytest.importorskip("streamlit.testing.v1").AppTest
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-PAGES = ["resumen", "cambios", "inventario", "historial", "productividad", "cargar", "campanas", "alertas", "rendimiento"]
+PAGES = ["resumen", "cambios", "inventario", "historial", "productividad", "cargar", "campanas", "alertas", "rendimiento", "cro"]
 
 
 def _xlsx(df: pd.DataFrame, sheet: str) -> bytes:
@@ -65,6 +65,15 @@ def store_root(tmp_path, make_sku, monkeypatch):
     perf["tasa_carrito_30d"] = perf["tasa_compra_30d"] = 0.1
     perf["ultimo_dia_vistas"] = pd.Timestamp("2026-04-02")
     job.store.save_perf(perf)
+    cro = pd.DataFrame({"SKU": ["1", "4"], "grupo": ["fuga_conversion", "joya_oculta"], "motivo": ["m", "m"],
+                        "impacto": [10.0, 2.0], "NIVEL 1": ["Hogar", "Hogar"], "vistas_ventana": [500, 40],
+                        "tasa_carrito": [0.01, 0.2], "cat_cart_rate": [0.1, 0.1], "tasa_compra": [0.003, 0.1],
+                        "cat_buy_rate": [0.03, 0.03], "content_score": [90, 95]})
+    job.store.save_cro(cro, {"as_of": "2026-04-02", "catalog_day": "2026-04-02",
+                             "groups": {"fuga_conversion": 1, "joya_oculta": 1},
+                             "content_vs_conversion": [{"banda": "90–95", "skus": 2, "tasa_carrito": 0.1, "tasa_compra": 0.03}],
+                             "channel_totals": [{"bucket": "organico", "vistas": 100, "carrito": 10, "compras": 3,
+                                                 "ingresos": 50.0, "tasa_carrito": 0.1, "tasa_compra": 0.03}]})
     index = job.store.load_index()
     index["perf"] = {"as_of": "2026-04-02", "catalog_day": "2026-04-02", "skus": 3, "skus_with_views_30d": 2}
     job.store.save_index(index)

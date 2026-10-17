@@ -117,6 +117,29 @@ def perf_meta() -> dict:
     return index().get("perf") or {}
 
 
+@st.cache_data(ttl=TTL, show_spinner="Cargando CRO…")
+def cro() -> tuple[pd.DataFrame | None, dict]:
+    return store().load_cro() if index().get("perf") else (None, {})
+
+
+WATCHLIST_ID = "en-la-mira"
+
+
+def add_to_watchlist(skus: list[str], user: str = "") -> int:
+    """Append SKUs to the 'En la mira' campaign list (created on first use). Returns the new size."""
+    from datetime import datetime, timezone
+
+    meta = list_meta(WATCHLIST_ID) or {
+        "id": WATCHLIST_ID, "name": "En la mira (CRO)", "owner": user, "status": "active",
+        "notes": "SKUs fijados desde la página CRO", "skus": [],
+        "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    }
+    merged = list(dict.fromkeys([*meta.get("skus", []), *[str(x) for x in skus]]))
+    write_list({**meta, "skus": merged, "status": "active"})
+    list_meta.clear()
+    return len(merged)
+
+
 # ── alerts ──────────────────────────────────────────────────────────────────
 def alert_days() -> list[str]:
     return sorted(index()["alerts"].get("days", []), reverse=True)

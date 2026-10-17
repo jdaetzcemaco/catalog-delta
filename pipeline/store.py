@@ -248,6 +248,26 @@ class ResultStore:
         data = self.storage.read(self._p("perf", "sku_perf.parquet"))
         return None if data is None else from_parquet_bytes(data)
 
+    def save_ga4_channels(self, day: str, df: pd.DataFrame) -> None:
+        self.storage.write(self._p("ga4", day, "channels.parquet"), to_parquet_bytes(df))
+
+    def save_window(self, name: str, df: pd.DataFrame) -> None:
+        self.storage.write(self._p("perf", f"window_{name}.parquet"), to_parquet_bytes(df))
+
+    def load_window(self, name: str) -> pd.DataFrame | None:
+        data = self.storage.read(self._p("perf", f"window_{name}.parquet"))
+        return None if data is None else from_parquet_bytes(data)
+
+    def save_cro(self, cro: pd.DataFrame, summary: dict) -> None:
+        self.storage.write(self._p("perf", "cro.parquet"), to_parquet_bytes(cro))
+        self.storage.write(self._p("perf", "cro_summary.json"), json.dumps(summary, indent=2, ensure_ascii=False,
+                                                                          default=str).encode())
+
+    def load_cro(self) -> tuple[pd.DataFrame | None, dict]:
+        data = self.storage.read(self._p("perf", "cro.parquet"))
+        raw = self.storage.read(self._p("perf", "cro_summary.json"))
+        return (None if data is None else from_parquet_bytes(data)), (json.loads(raw) if raw else {})
+
     def save_daily(self, name: str, df: pd.DataFrame) -> None:
         """Per-day rows for the aggregation window (product, landing, gsc): one file per source."""
         self.storage.write(self._p("perf", f"daily_{name}.parquet"), to_parquet_bytes(df))

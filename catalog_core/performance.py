@@ -137,3 +137,51 @@ def sku_performance(sku_map: pd.DataFrame, item_perf: pd.DataFrame, landing_perf
     num = [c for c in out.columns if re.search(r"_(7|30|90)d(_prev)?$", c) and not c.startswith("posicion")]
     out[num] = out[num].fillna(0)
     return out
+
+
+CHANNEL_WINDOW = 30
+
+
+def daily_channel_frame(channels_by_day: dict[str, pd.DataFrame]) -> pd.DataFrame:
+    """One row per (day, SKU, bucket) with GA4 item metrics split by channel bucket."""
+    frames = []
+    for day, ch in channels_by_day.items():
+        if ch is None or ch.empty:
+            continue
+        d = ch.rename(columns=ITEM_COLS)
+        d = d[~d["SKU"].astype(str).isin(["", "(not set)", "nan"])]
+        d = d.groupby(["SKU", "bucket"], as_index=False)[PRODUCT_METRICS].sum()
+        d.insert(0, "day", pd.Timestamp(day))
+        frames.append(d)
+    if not frames:
+        return pd.DataFrame(columns=["day", "SKU", "bucket", *PRODUCT_METRICS])
+    return pd.concat(frames, ignore_index=True)
+
+
+def channel_aggregates(daily_channel: pd.DataFrame, as_of: str, window: int = CHANNEL_WINDOW) -> pd.DataFrame:
+    """Per SKU, wide columns `<metric>_30d_<bucket>` (e.g. vistas_30d_pagado_social)."""
+    if daily_channel is None or daily_channel.empty:
+        return pd.DataFrame(columns=["SKU"])
+    d = daily_channel.copy()
+    d["day"] = pd.to_datetime(d["day"])
+    end = pd.Timestamp(as_of)
+    win = d[(d["day"] > end - pd.Timedelta(days=window)) & (d["day"] <= end)]
+    if win.empty:
+        return pd.DataFrame(columns=["SKU"])
+    piv = win.pivot_table(index="SKU", columns="bucket", values=PRODUCT_METRICS, aggfunc="sum", fill_value=0)
+    piv.columns = [f"{m}_{window}d_{b}" for m, b in piv.columns]
+    return piv.reset_index()
+
+
+def channel_totals(daily_channel: pd.DataFrame, as_of: str, window: int = CHANNEL_WINDOW) -> pd.DataFrame:
+    """Site-wide funnel per channel bucket for the window (for the CRO / Rendimiento summary)."""
+    if daily_channel is None or daily_channel.empty:
+        return pd.DataFrame(columns=["bucket", *PRODUCT_METRICS])
+    d = daily_channel.copy()
+    d["day"] = pd.to_datetime(d["day"])
+    end = pd.Timestamp(as_of)
+    win = d[(d["day"] > end - pd.Timedelta(days=window)) & (d["day"] <= end)]
+    out = win.groupby("bucket", as_index=False)[PRODUCT_METRICS].sum()
+    out["tasa_carrito"] = (out["carrito"] / out["vistas"].where(out["vistas"] > 0)).round(4)
+    out["tasa_compra"] = (out["compras"] / out["vistas"].where(out["vistas"] > 0)).round(4)
+    return out.sort_values("vistas", ascending=False).reset_index(drop=True)
