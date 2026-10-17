@@ -231,6 +231,14 @@ class ResultStore:
         # The only processed/ file the app writes: user actions, never touched by the job
         self.storage.write(self._p("alerts", "ack.json"), json.dumps(acks, indent=2, ensure_ascii=False).encode())
 
+    # ── agent usage (written by the app: spend of the "Preguntar" page per day) ──
+    def load_agent_usage(self, day: str) -> dict | None:
+        raw = self.storage.read(self._p("agent", f"usage-{day}.json"))
+        return json.loads(raw) if raw else None
+
+    def save_agent_usage(self, day: str, usage: dict) -> None:
+        self.storage.write(self._p("agent", f"usage-{day}.json"), json.dumps(usage, indent=2).encode())
+
     # ── GA4 ─────────────────────────────────────────────────────────────────
     def save_ga4_day(self, day: str, items: pd.DataFrame, landing: pd.DataFrame) -> None:
         self.storage.write(self._p("ga4", day, "items.parquet"), to_parquet_bytes(items))

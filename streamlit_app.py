@@ -76,6 +76,7 @@ pages = {
         st.Page("app/pages/campanas.py", title="Campañas", icon="📣"),
         st.Page("app/pages/rendimiento.py", title="Rendimiento", icon="📊"),
         st.Page("app/pages/cro.py", title="CRO", icon="🎯"),
+        st.Page("app/pages/preguntar.py", title="Preguntar", icon="💬"),
     ],
     "Equipos": [st.Page("app/pages/productividad.py", title="Productividad", icon="👥")],
     "Datos": [st.Page("app/pages/cargar.py", title="Cargar archivos", icon="📤")],

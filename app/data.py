@@ -140,6 +140,22 @@ def add_to_watchlist(skus: list[str], user: str = "") -> int:
     return len(merged)
 
 
+@st.cache_data(ttl=TTL, show_spinner=False)
+def visible_history() -> pd.DataFrame | None:
+    return store().load_visible_history()
+
+
+# ── agent ("Preguntar") ─────────────────────────────────────────────────────
+def agent_budget():
+    """Shared daily spend cap for the agent (AGENT_DAILY_BUDGET_USD, default US$5)."""
+    import os
+
+    from app.agent import DailyBudget
+
+    limit = float(os.environ.get("AGENT_DAILY_BUDGET_USD", "5") or 5)
+    return DailyBudget(limit, store().load_agent_usage, store().save_agent_usage)
+
+
 # ── alerts ──────────────────────────────────────────────────────────────────
 def alert_days() -> list[str]:
     return sorted(index()["alerts"].get("days", []), reverse=True)

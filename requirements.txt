@@ -12,3 +12,4 @@ google-auth==2.50.0
 requests==2.32.5
 google-analytics-data==0.23.3
 google-api-python-client==2.201.0
+anthropic==1.15.0

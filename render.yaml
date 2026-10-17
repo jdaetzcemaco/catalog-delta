@@ -69,3 +69,8 @@ services:
         sync: false
       - key: RENDER_CRON_JOB_ID
         sync: false
+      # "Preguntar" page (Claude). The key is set in the dashboard; the cap is a daily maximum in US$
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: AGENT_DAILY_BUDGET_USD
+        value: "5"

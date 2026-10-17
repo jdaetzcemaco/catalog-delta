@@ -14,7 +14,7 @@ from pipeline.storage import LocalStorage
 
 AppTest = pytest.importorskip("streamlit.testing.v1").AppTest
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-PAGES = ["resumen", "cambios", "inventario", "historial", "productividad", "cargar", "campanas", "alertas", "rendimiento", "cro"]
+PAGES = ["resumen", "cambios", "inventario", "historial", "productividad", "cargar", "campanas", "alertas", "rendimiento", "cro", "preguntar"]
 
 
 def _xlsx(df: pd.DataFrame, sheet: str) -> bytes:
@@ -99,3 +99,13 @@ def test_resumen_warns_about_placeholder_stock(store_root):
     at.session_state["authenticated"] = True
     at.run()
     assert any("STOCK = 1,000,000" in w.value for w in at.warning)
+
+
+def test_preguntar_renders_with_api_key(store_root, monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key-not-used")
+    at = AppTest.from_file(os.path.join(ROOT, "streamlit_app.py"), default_timeout=60)
+    at.session_state["authenticated"] = True
+    at.run()
+    at.switch_page("app/pages/preguntar.py").run()
+    assert not at.exception, [e.value for e in at.exception]
+    assert any("Tope diario" in m.label for m in at.metric)
