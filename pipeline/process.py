@@ -24,7 +24,8 @@ from catalog_core.alerts import (AlertThresholds, catalog_alerts, export_late_al
                                  new_visible_weak_alert, organic_drop_alerts, tipo_c_stuck_alert, traffic_alerts)
 from catalog_core.campaigns import READINESS_VERSION, clean_skus, readiness
 from catalog_core.productivity import detect_report
-from catalog_core.sku_history import rebuild_visible_history, update_visible_history, update_workflow_dates
+from catalog_core.sku_history import (rebuild_visible_history, update_visible_history, update_work_log,
+                                     update_workflow_dates, work_log_rows)
 
 from .config import Settings
 from .storage import FileInfo, Storage
@@ -406,6 +407,26 @@ class Job:
         if changed and wf is not None:
             self.store.save_workflow_dates(wf)
             self.store.save_index(index)
+
+        # Who worked each SKU: every Diseño/Edición report row, kept (small: ~50 rows a day)
+        done_wl = hist_meta.setdefault("work_log_files", [])
+        pending_wl = [(team, day) for team in ("diseno", "edicion") for day in sorted(index["productivity"].get(team, {}))
+                      if f"{team}/{day}" not in done_wl]
+        if pending_wl:
+            try:
+                log_df = self.store.load_work_log()
+                for team, day in pending_wl:
+                    df = self.store.load_productivity(day, team)
+                    if df is not None:
+                        log_df = update_work_log(log_df, work_log_rows("Diseño" if team == "diseno" else "Edición", day, df))
+                    done_wl.append(f"{team}/{day}")
+                if log_df is not None:
+                    self.store.save_work_log(log_df)
+                self.store.save_index(index)
+                log.info("Work log: %s rows, %s report files", f"{0 if log_df is None else len(log_df):,}", len(done_wl))
+            except Exception as exc:
+                log.exception("Work log failed")
+                report.errors.append(f"work log: {exc}")
 
     # ── campaign lists ──────────────────────────────────────────────────────
     def run_campaigns(self, report: PassReport) -> None:

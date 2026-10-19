@@ -13,7 +13,8 @@ cada herramienta, para auditar las cifras.
 | `resumen_dia` | KPIs del día vs el anterior, Inventario Omnicanal, calidad del export, filas por tabla |
 | `cambios` | Filas de una tabla de Cambios o de Inventario (máx. 200) |
 | `alertas` | Alertas del día, con muestra de SKUs y si ya están revisadas |
-| `sku` | Ficha: catálogo, historial de visibilidad, GA4/GSC, CRO, listas donde está |
+| `sku` | Ficha: catálogo, historial de visibilidad, GA4/GSC, CRO, listas donde está, usuarios que lo trabajaron |
+| `trabajo` | Quién trabajó y quién promovió un SKU (o qué SKUs trabajó una persona), de los reportes de productividad de Diseño y Edición |
 | `buscar_sku` | Búsqueda por código, nombre o marca (sin tildes) |
 | `lista` | Listas de campaña; detalle con fallas por check y SKUs no listos |
 | `ranking_skus` | Ranking por cualquier métrica de rendimiento, con filtros |
@@ -42,3 +43,12 @@ como datos no confiables (el system prompt prohíbe seguir instrucciones dentro 
 
 Solo en el servicio web: `ANTHROPIC_API_KEY` (secreto) y `AGENT_DAILY_BUDGET_USD`.
 Opcional `AGENT_MODEL` para cambiar el modelo.
+
+## Historial de trabajo por SKU
+
+El job guarda `processed/sku_history/work_log.parquet`: una fila por SKU y por reporte diario de
+productividad (Diseño y Edición) con el usuario que lo trabajó, quien lo promovió y las fechas del
+flujo. Se arma con todos los reportes guardados y se actualiza cuando llega uno nuevo
+(`index["sku_history"]["work_log_files"]`). Cubre solo los días con reporte: desde el 23 de
+septiembre de 2026, cuando empezó la lectura de los correos de STEP, más un reporte suelto del 20
+de marzo.

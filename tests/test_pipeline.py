@@ -125,6 +125,20 @@ def test_productivity_files_are_stored_per_team_and_day(env):
     assert stored["<ID>"].tolist() == ["1193552"]
 
 
+def test_work_log_is_built_from_productivity_reports(env):
+    job, drop, history, sku = env
+    drop("catalog-daily-2026-04-23.xlsx", pd.DataFrame([sku("1193552")]))
+    df = pd.DataFrame({"<ID>": [1193552], "<Name>": ["X"], "Total Omnicanal": [3], "Usuario": ["ana"],
+                       "Usuario Promueve desde Catalogo": ["beto"], "Fecha de Salida del Flujo de trabajo": ["2026-04-22"]})
+    drop("productivity-diseno-2026-04-23_07.30.10.xlsx", df, sheet="Sheet1")
+    job.run()
+    log = job.store.load_work_log()
+    assert log[["SKU", "equipo", "usuario", "promovio"]].values.tolist() == [["1193552", "Diseño", "ana", "beto"]]
+    assert job.store.load_index()["sku_history"]["work_log_files"] == ["diseno/2026-04-23"]
+    job.run()                                                     # nothing new: unchanged
+    assert len(job.store.load_work_log()) == 1
+
+
 def test_file_day_and_latest_per_day():
     from datetime import datetime, timezone
     a = FileInfo("catalog-daily-2026-04-01.xlsx", "x", datetime(2026, 4, 1, 12, tzinfo=timezone.utc), 1)

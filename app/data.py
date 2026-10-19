@@ -145,6 +145,12 @@ def visible_history() -> pd.DataFrame | None:
     return store().load_visible_history()
 
 
+@st.cache_data(ttl=TTL, show_spinner=False)
+def work_log() -> pd.DataFrame | None:
+    """Who worked / promoted each SKU, from every stored Diseño and Edición report."""
+    return store().load_work_log()
+
+
 # ── agent ("Preguntar") ─────────────────────────────────────────────────────
 def agent_budget():
     """Shared daily spend cap for the agent (AGENT_DAILY_BUDGET_USD, default US$5)."""

@@ -38,3 +38,21 @@ def test_workflow_dates_keep_latest_per_sku():
     wf = update_workflow_dates(wf, "Diseño", rep2).set_index("SKU")
     assert wf.loc["1", "salida_flujo"] == pd.Timestamp("2026-09-20") and wf.loc["1", "equipo"] == "Diseño"
     assert wf.loc["2", "equipo"] == "Edición" and pd.isna(wf.loc["2", "fin_dat_log"])
+
+
+def test_work_log_keeps_every_worker_and_replaces_resent_reports():
+    from catalog_core.sku_history import update_work_log, work_log_rows
+
+    rep = lambda user, promo: pd.DataFrame({
+        "<ID>": [756006.0, "830548"], "<Name>": ["Villa", "Silla"], "Usuario": [user, "BETO"],
+        "Usuario Promueve desde Compras": [promo, None], "Fecha de Salida del Flujo de trabajo": ["2026-10-01"] * 2,
+        "Fecha_Fin_Dat_Log": ["2026-10-06 13:59:52", None], "Fecha de Creación STEP": ["2020-12-07"] * 2})
+    log = update_work_log(None, work_log_rows("Edición", "2026-10-02", rep("ACASTILLO - Ashley", "ACASTILLO - Ashley")))
+    log = update_work_log(log, work_log_rows("Edición", "2026-10-03", rep("AD_EDICION - Diego", "ACASTILLO - Ashley")))
+    r = log[log["SKU"] == "756006"]
+    assert r["usuario"].tolist() == ["ACASTILLO - Ashley", "AD_EDICION - Diego"]
+    assert r["promovio"].tolist() == ["ACASTILLO - Ashley"] * 2
+    assert pd.isna(log[log["SKU"] == "830548"]["promovio"]).all()
+    # the same day/team sent again replaces its rows instead of duplicating them
+    log = update_work_log(log, work_log_rows("Edición", "2026-10-03", rep("OTRA", "OTRA")))
+    assert log[log["SKU"] == "756006"]["usuario"].tolist() == ["ACASTILLO - Ashley", "OTRA"]

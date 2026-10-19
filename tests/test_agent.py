@@ -51,6 +51,12 @@ class FakeSrc:
     def perf_meta(self): return {"as_of": "2026-10-15"}
     def cro(self): return self.cro_df, {"as_of": "2026-10-15"}
     def visible_history(self): return pd.DataFrame({"SKU": ["100"], "last_visible": ["2026-10-16"]})
+    def work_log(self):
+        return pd.DataFrame({"SKU": ["100", "100", "200"], "dia_reporte": ["2026-10-02", "2026-10-03", "2026-10-03"],
+                             "equipo": ["Diseño", "Edición", "Edición"],
+                             "usuario": ["ACASTILLO - Ashley", "AD_EDICION - Diego Conedera", "ACASTILLO - Ashley"],
+                             "promovio": ["ACASTILLO - Ashley", "ACASTILLO - Ashley", None],
+                             "salida_flujo": pd.to_datetime(["2026-10-01"] * 3), "producto": ["Sartén", "Sartén", "Silla"]})
 
 
 @pytest.fixture
@@ -218,3 +224,18 @@ def test_max_tokens_with_open_tool_call_is_not_kept(tools):
     history = []
     res = agent.run_turn(client, history, "q", tools=tools, budget=MemoryBudget(5))
     assert res.stopped == "max_tokens" and history[-1]["role"] == "user"
+
+
+def test_trabajo_by_sku_and_by_user(tools):
+    out, err = call(tools, "trabajo", sku="100")
+    assert not err and out["filas"] == 2 and out["cobertura"]["dias_con_reporte"] == 2
+    who = {(r["usuario"], r["rol"]) for r in out["resumen_por_usuario"]}
+    assert ("AD_EDICION - Diego Conedera", "trabajó") in who and ("ACASTILLO - Ashley", "promovió") in who
+    out, err = call(tools, "trabajo", usuario="conedera")
+    assert not err and out["skus"] == 1 and [r["usuario"] for r in out["resumen_por_usuario"]] == ["AD_EDICION - Diego Conedera"]
+    out, err = call(tools, "trabajo", usuario="ashley", desde="2026-10-03")
+    assert not err and out["skus"] == 2
+    out, err = call(tools, "trabajo")
+    assert err and "sku" in out["error"]
+    out, _ = call(tools, "sku", sku="100")
+    assert out["productividad"]["usuarios_que_lo_trabajaron"] == ["ACASTILLO - Ashley", "AD_EDICION - Diego Conedera"]

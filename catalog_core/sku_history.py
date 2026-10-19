@@ -69,3 +69,42 @@ def update_workflow_dates(existing: pd.DataFrame | None, team: str, report: pd.D
     # Team of the most recent exit
     latest = both.sort_values("salida_flujo").drop_duplicates("SKU", keep="last")[["SKU", "equipo"]]
     return agg.merge(latest, on="SKU", how="left")[WORKFLOW_COLS].reset_index(drop=True)
+
+
+# ── who worked each SKU (from the Diseño / Edición productivity reports) ────
+WORK_LOG_COLS = ["SKU", "dia_reporte", "equipo", "usuario", "promovio", "salida_flujo", "fin_edi_mer",
+                 "fin_dat_log", "creacion_step", "producto"]
+_PROMOTER = {"Diseño": "Usuario Promueve desde Catalogo", "Edición": "Usuario Promueve desde Compras"}
+
+
+def work_log_rows(team: str, day: str, report: pd.DataFrame) -> pd.DataFrame:
+    """One row per SKU of a productivity report: who worked it, who promoted it, its dates."""
+    if report is None or report.empty or "<ID>" not in report.columns:
+        return pd.DataFrame(columns=WORK_LOG_COLS)
+    get = lambda c: report[c] if c in report.columns else pd.Series(None, index=report.index, dtype=object)
+    text = lambda c: get(c).astype("string").str.strip().replace({"": pd.NA, "nan": pd.NA, "None": pd.NA})
+    out = pd.DataFrame({
+        "SKU": report["<ID>"].astype(str).str.strip().str.replace(r"\.0$", "", regex=True),
+        "dia_reporte": day,
+        "equipo": team,
+        "usuario": text("Usuario"),
+        "promovio": text(_PROMOTER.get(team, "")),
+        "salida_flujo": pd.to_datetime(get("Fecha de Salida del Flujo de trabajo"), errors="coerce"),
+        "fin_edi_mer": pd.to_datetime(get("Fecha_Fin_Edi_Mer"), errors="coerce"),
+        "fin_dat_log": pd.to_datetime(get("Fecha_Fin_Dat_Log"), errors="coerce"),
+        "creacion_step": pd.to_datetime(get("Fecha de Creación STEP"), errors="coerce"),
+        "producto": text("<Name>"),
+    })
+    return out[WORK_LOG_COLS].reset_index(drop=True)
+
+
+def update_work_log(existing: pd.DataFrame | None, rows: pd.DataFrame) -> pd.DataFrame:
+    """Append report rows; the same report day/team replaces its earlier rows (re-sent reports)."""
+    if existing is None or existing.empty:
+        both = rows
+    else:
+        keys = set(zip(rows["dia_reporte"], rows["equipo"]))
+        keep = ~pd.Series(list(zip(existing["dia_reporte"], existing["equipo"])), index=existing.index).isin(keys)
+        both = pd.concat([existing[keep], rows], ignore_index=True)
+    both = both.drop_duplicates(["SKU", "dia_reporte", "equipo", "usuario", "promovio"])
+    return both.sort_values(["SKU", "dia_reporte", "equipo"]).reset_index(drop=True)[WORK_LOG_COLS]

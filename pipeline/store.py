@@ -215,6 +215,13 @@ class ResultStore:
         data = self.storage.read(self._p("sku_history", "workflow.parquet"))
         return None if data is None else from_parquet_bytes(data)
 
+    def save_work_log(self, df: pd.DataFrame) -> None:
+        self.storage.write(self._p("sku_history", "work_log.parquet"), to_parquet_bytes(df))
+
+    def load_work_log(self) -> pd.DataFrame | None:
+        data = self.storage.read(self._p("sku_history", "work_log.parquet"))
+        return None if data is None else from_parquet_bytes(data)
+
     # ── alerts ──────────────────────────────────────────────────────────────
     def save_alerts(self, day: str, payload: dict) -> None:
         self.storage.write(self._p("alerts", f"{day}.json"), json.dumps(payload, indent=2, ensure_ascii=False).encode())
