@@ -144,11 +144,14 @@ if k["total"] - k["listos"]:
                "STEP**: el código nunca apareció en un export; suele ser un SKU nuevo que todavía no se crea o no "
                "sale del flujo.")
     pc = st.columns(3)
-    ui.kpi(pc[0], PENDING_REASONS["solo_inventario"], pend["solo_inventario"], inverse=True)
-    ui.kpi(pc[1], PENDING_REASONS["step"], pend["step"], inverse=True,
-           help=f"De estos, {pend['step_sin_stock']:,} además no tienen stock. Por criterio: "
-                + ", ".join(f"{CHECKS[c].split(' (')[0]} {n:,}" for c, n in pend["step_por_check"].items() if n))
-    ui.kpi(pc[2], PENDING_REASONS["fuera_catalogo"], pend["fuera_catalogo"], inverse=True)
+    for col_, key in zip(pc, PENDING_REASONS):
+        n_ = pend[key]
+        ui.kpi(col_, PENDING_REASONS[key], n_, inverse=True, help=(
+            f"De estos, {pend['step_sin_stock']:,} además no tienen stock. Por criterio: "
+            + ", ".join(f"{CHECKS[c].split(' (')[0]} {v:,}" for c, v in pend["step_por_check"].items() if v))
+            if key == "step" else None)
+        col_.button("Ver en la tabla ↓", key=f"see_{key}", disabled=not n_, width="stretch",
+                    on_click=lambda r=key: st.session_state.update(camp_view="Pendientes", camp_reason=r))
 
 if len(lost):
     st.subheader(f"Dejaron de estar listos desde el {ui.fmt_day(prev_day)}")
@@ -170,7 +173,8 @@ if perf is not None and not perf.empty:
            help="SKUs de la lista sin vistas en 30 días (visibles o no)")
 
 st.subheader("SKUs")
-view = st.segmented_control("Ver", ["Pendientes", "Listos", "Todos"], default="Pendientes", key="camp_view",
+st.session_state.setdefault("camp_view", "Pendientes")      # also set by the "Ver en la tabla" buttons
+view = st.segmented_control("Ver", ["Pendientes", "Listos", "Todos"], key="camp_view",
                             label_visibility="collapsed") or "Pendientes"
 shown = status if view == "Todos" else status[status["listo"] == (view == "Listos")]
 if view == "Pendientes" and len(shown):

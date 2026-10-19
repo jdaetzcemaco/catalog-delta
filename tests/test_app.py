@@ -111,3 +111,16 @@ def test_preguntar_renders_with_api_key(store_root, monkeypatch):
     at.switch_page("app/pages/preguntar.py").run()
     assert not at.exception, [e.value for e in at.exception]
     assert any("Tope diario" in m.label for m in at.metric)
+
+
+def test_campanas_has_a_filter_button_per_pending_reason(store_root):
+    # Clicking is checked in a browser: AppTest cannot replay a segmented_control whose
+    # value was set from a callback ("content: 'P' is not in list").
+    at = AppTest.from_file(os.path.join(ROOT, "streamlit_app.py"), default_timeout=60)
+    at.session_state["authenticated"] = True
+    at.run()
+    at.switch_page("app/pages/campanas.py").run()
+    assert not at.exception, [e.value for e in at.exception]
+    buttons = {b.key: b for b in at.button if (b.key or "").startswith("see_")}
+    assert set(buttons) == {"see_solo_inventario", "see_step", "see_fuera_catalogo"}
+    assert not buttons["see_fuera_catalogo"].disabled          # SKU "9" of the test list is not in the export
