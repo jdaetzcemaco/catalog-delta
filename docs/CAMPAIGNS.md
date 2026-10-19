@@ -45,3 +45,19 @@ checks que perdieron (`regressions`).
 - `workflow.parquet`: última `Fecha de Salida del Flujo de trabajo`, `Fecha_Fin_Dat_Log` y
   `Fecha_Fin_Edi_Mer` por SKU y el equipo de la salida más reciente, acumulado de los
   reportes de productividad de Diseño y Edición.
+
+## Pendientes por motivo
+
+Cada SKU pendiente cae en uno de tres grupos (`pending_breakdown` en `catalog_core/campaigns.py`):
+
+| Motivo | Regla |
+|---|---|
+| Solo falta inventario | Sin stock real, y todo lo demás bien. "No visible" no cuenta como falla propia: en el export ningún SKU queda visible sin stock (2026-10-19: 142 de 42,395 visibles sin stock real). El check de contenido tampoco, si solo falla porque el score perdió los 10 puntos de visibilidad. |
+| Pendiente en STEP | Falla habilitado, contenido o categoría real por sí mismo, o tiene stock y aun así no está visible. La columna «Falta en STEP» dice cuál; «También sin stock» marca los que además no tienen stock. |
+| Aún no llega al export de STEP | El código no está en el export del día. Suele ser un SKU nuevo que no se ha creado o no ha salido del flujo. |
+
+El export no trae un campo de "publicado en VTEX"; la separación sale de los checks.
+
+Al subir una lista, si la mayoría de valores son códigos numéricos, se descartan los textos sin
+dígitos (encabezados repetidos, "NUEVO", "NEW"). El job aplica la misma limpieza a listas ya
+guardadas al evaluarlas.

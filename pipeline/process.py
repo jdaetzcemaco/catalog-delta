@@ -22,7 +22,7 @@ from catalog_core import load_catalog, load_productivity, run_catalog
 from catalog_core.loaders import attach_inventory, load_inventory_sheet
 from catalog_core.alerts import (AlertThresholds, catalog_alerts, export_late_alert, finalize, list_alerts,
                                  new_visible_weak_alert, organic_drop_alerts, tipo_c_stuck_alert, traffic_alerts)
-from catalog_core.campaigns import readiness
+from catalog_core.campaigns import READINESS_VERSION, clean_skus, readiness
 from catalog_core.productivity import detect_report
 from catalog_core.sku_history import rebuild_visible_history, update_visible_history, update_workflow_dates
 
@@ -446,7 +446,8 @@ class Job:
         day = days[-1]
         active = [lid for lid, e in lists.items() if e.get("status", "active") == "active"]
         todo = [lid for lid in active if day not in lists[lid].get("status_days", [])
-                or f"ingest {lid}" in report.lists]
+                or f"ingest {lid}" in report.lists
+                or lists[lid].get("readiness_version", 1) < READINESS_VERSION]
         if not todo:
             return
         today_raw = self.store.load_snapshot(day)
@@ -457,13 +458,14 @@ class Job:
         for lid in todo:
             try:
                 meta = self.store.load_list(lid) or {}
-                status = readiness(meta.get("skus", []), today_raw, flags, visible, workflow)
+                status = readiness(clean_skus(meta.get("skus", [])), today_raw, flags, visible, workflow)
                 self.store.save_list_status(lid, day, status)
                 days_done = set(lists[lid].get("status_days", []))
                 days_done.add(day)
                 lists[lid]["status_days"] = sorted(days_done)
                 lists[lid]["last_day"] = day
                 lists[lid]["last_kpis"] = {"listos": int(status["listo"].sum()), "total": len(status)}
+                lists[lid]["readiness_version"] = READINESS_VERSION
                 self.store.save_index(index)
                 report.lists.append(f"status {lid} {day}")
                 log.info("List %s: %s/%s ready on %s", lid, int(status["listo"].sum()), len(status), day)

@@ -212,7 +212,8 @@ TOOL_SCHEMAS: list[dict] = [
         "name": "lista",
         "description": "Listas de campaña. Sin `nombre`: todas las listas con su % de SKUs listos. Con `nombre` "
                        "(o id): el estado del día más reciente, cuántos SKUs fallan cada check (en catálogo, "
-                       "visible, habilitado, contenido, categoría real, stock) y los SKUs que no están listos.",
+                       "visible, habilitado, contenido, categoría real, stock), los pendientes por motivo (solo falta "
+                       "inventario / pendiente en STEP / no está en el catálogo) y los SKUs que no están listos.",
         "input_schema": {"type": "object", "properties": {
             "nombre": {"type": "string"}, "limite": _LIMIT}, "additionalProperties": False},
     },
@@ -460,9 +461,19 @@ class AgentTools:
         out["total"] = len(status)
         out["listos"] = int(status["listo"].sum())
         out["fallan_por_check"] = {c: int((~status[c].astype(bool)).sum()) for c in checks}
-        pending = status[~status["listo"].astype(bool)].copy()
+        from catalog_core.campaigns import PENDING_REASONS, pending_breakdown, pending_kpis
+
+        if set(checks) == {"en_catalogo", "visible", "habilitado", "contenido", "categoria_real", "stock"}:
+            pk = pending_kpis(status)
+            out["pendientes_por_motivo"] = {PENDING_REASONS[k]: pk[k] for k in PENDING_REASONS}
+            out["pendientes_step_que_ademas_no_tienen_stock"] = pk["step_sin_stock"]
+            pending = pending_breakdown(status)
+            pending["motivo_pendiente"] = pending["motivo_pendiente"].map(PENDING_REASONS)
+        else:
+            pending = status[~status["listo"].astype(bool)].copy()
         pending["falla"] = pending.apply(lambda r: [c for c in checks if not bool(r[c])], axis=1)
-        keep = [c for c in ["SKU", "NOMBRE DE PRODUCTO", "falla", "score", "ultima_vez_visible"] if c in pending.columns]
+        keep = [c for c in ["SKU", "NOMBRE DE PRODUCTO", "motivo_pendiente", "falla", "score", "ultima_vez_visible"]
+                if c in pending.columns]
         out["no_listos"] = _records(pending[keep], limite)
         return out
 

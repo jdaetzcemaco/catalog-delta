@@ -45,7 +45,8 @@ class FakeSrc:
     def list_status(self, list_id, day):
         return pd.DataFrame({"SKU": ["100", "200"], "en_catalogo": [True, True], "visible": [True, True],
                              "habilitado": [True, True], "contenido": [True, False], "categoria_real": [True, True],
-                             "stock": [True, False], "listo": [True, False]})
+                             "stock": [True, False], "stock_confiable": [True, True],
+                             "listo": [True, False]})
     def perf(self): return self.perf_df
     def perf_meta(self): return {"as_of": "2026-10-15"}
     def cro(self): return self.cro_df, {"as_of": "2026-10-15"}
@@ -78,6 +79,7 @@ def test_every_tool_answers(tools):
     assert not err and out["fallan_por_check"] == {"en_catalogo": 0, "visible": 0, "habilitado": 0, "contenido": 1,
                                                    "categoria_real": 0, "stock": 1}
     assert out["no_listos"][0]["falla"] == ["contenido", "stock"]
+    assert out["pendientes_por_motivo"]["Pendiente en STEP"] == 1 and out["no_listos"][0]["motivo_pendiente"]
     out, err = call(tools, "ranking_skus", metrica="vistas_30d", con_stock=False)
     assert not err and [s["SKU"] for s in out["skus"]] == ["200"] and out["skus"][0]["NOMBRE DE PRODUCTO"]
     out, err = call(tools, "historial", metricas=["Visible %"], desde="2026-10-16")

@@ -28,6 +28,7 @@ LABELS = {
     "score": "Score", "falta_imagen": "Falta imagen", "falta_precio": "Falta precio",
     "falta_descripcion": "Falta descripción", "ultima_vez_visible": "Última vez visible",
     "primera_vez_visto": "Primera vez visto", "dias_visible_seguidos": "Días visible seguidos",
+    "motivo_pendiente": "Motivo", "falta_en_step": "Falta en STEP", "tambien_sin_stock": "También sin stock",
     "salida_flujo": "Salida del flujo", "fin_dat_log": "Fin Dat_Log", "equipo": "Equipo", "perdio": "Perdió",
     # performance (GA4 / Search Console)
     "vistas_7d": "Vistas 7d", "vistas_30d": "Vistas 30d", "vistas_90d": "Vistas 90d", "vistas_7d_prev": "Vistas 7d ant.",
@@ -50,7 +51,7 @@ LABELS = {
     "content_score": "Score",
 }
 BOOL_COLS = {"listo", "en_catalogo", "visible", "habilitado", "contenido", "categoria_real", "stock",
-             "stock_confiable", "falta_imagen", "falta_precio", "falta_descripcion"}
+             "stock_confiable", "falta_imagen", "falta_precio", "falta_descripcion", "tambien_sin_stock"}
 INFO_COLS = {"NOMBRE DE PRODUCTO": "Producto", "NIVEL 1": "Nivel 1", "URL IMAGEN": "Imagen", "URL": "Página"}
 
 

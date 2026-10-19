@@ -71,3 +71,52 @@ def test_regressions_name_what_broke(make_catalog, make_sku):
 
 def test_list_slug():
     assert list_slug("Navidad 2026 · Hogar & Deco!") == "navidad-2026-hogar-deco"
+
+
+def test_pending_breakdown_splits_inventory_step_and_missing():
+    from catalog_core.campaigns import pending_breakdown, pending_kpis
+
+    ok = dict(en_catalogo=True, visible=True, habilitado=True, contenido=True, categoria_real=True,
+              stock=True, stock_confiable=True, listo=True, score=95, falta_imagen=False, falta_precio=False,
+              falta_descripcion=False)
+    rows = [
+        {"SKU": "listo", **ok},
+        {"SKU": "inv", **ok, "stock": False, "listo": False},
+        # no stock → hidden, and the score lost its 10 visibility points (85 → 75): still inventory
+        {"SKU": "inv_oculto", **ok, "stock": False, "visible": False, "contenido": False, "score": 75, "listo": False},
+        # with stock and hidden: a publishing problem
+        {"SKU": "oculto_con_stock", **ok, "visible": False, "listo": False},
+        {"SKU": "sin_desc", **ok, "stock": False, "visible": False, "contenido": False, "score": 70,
+         "falta_descripcion": True, "listo": False},
+        {"SKU": "tipo_c", **ok, "categoria_real": False, "listo": False},
+        {"SKU": "fuera", **{k: False for k in ok}, "stock_confiable": True, "score": None},
+    ]
+    p = pending_breakdown(pd.DataFrame(rows)).set_index("SKU")
+    assert "listo" not in p.index
+    assert p["motivo_pendiente"].to_dict() == {
+        "inv": "solo_inventario", "inv_oculto": "solo_inventario", "oculto_con_stock": "step",
+        "sin_desc": "step", "tipo_c": "step", "fuera": "fuera_catalogo"}
+    assert p.loc["oculto_con_stock", "falta_en_step"] == "Visible"
+    assert p.loc["sin_desc", "falta_en_step"] == "Contenido mínimo"
+    assert p.loc["sin_desc", "tambien_sin_stock"] and not p.loc["tipo_c", "tambien_sin_stock"]
+    k = pending_kpis(pd.DataFrame(rows))
+    assert (k["solo_inventario"], k["step"], k["fuera_catalogo"], k["step_sin_stock"]) == (2, 3, 1, 1)
+    assert k["step_por_check"] == {"visible": 1, "habilitado": 0, "contenido": 1, "categoria_real": 1}
+
+
+def test_pending_breakdown_empty():
+    from catalog_core.campaigns import pending_breakdown
+
+    ok = dict(SKU="a", en_catalogo=True, visible=True, habilitado=True, contenido=True, categoria_real=True,
+              stock=True, stock_confiable=True, listo=True)
+    assert pending_breakdown(pd.DataFrame([ok])).empty
+
+
+def test_clean_skus_drops_labels_in_a_code_column():
+    from catalog_core.campaigns import clean_skus
+
+    assert clean_skus(["SKU", "NUEVO", "1218521", "1218521.0", " 830548 ", "NEW", None, float("nan"), "",
+                       "1206234", "1206252", "12AB"]) == ["1218521", "830548", "1206234", "1206252", "12AB"]
+    assert clean_skus(["ABC-1", "XYZ"]) == ["ABC-1", "XYZ"]        # mostly text: kept as is
+    skus, _ = parse_sku_list(pd.DataFrame({"SKU": ["NUEVO", "1218521", "1206234", "NEW"]}))
+    assert skus == ["1218521", "1206234"]
