@@ -49,9 +49,24 @@ LABELS = {
     "compra_por_carrito": "Compra / carrito", "cat_buy_per_cart": "Categoría: compra / carrito",
     "paid_views": "Vistas pauta 30d", "tasa_compra_pagado": "Compra desde pauta", "cat_paid_buy_rate": "Categoría: compra pauta",
     "content_score": "Score",
+    # SEO impact
+    "estado": "Estado", "event_day": "Salida del flujo", "cohorte": "Semana", "usuarios": "Usuarios",
+    "impr_antes": "Impr. antes", "impr_despues": "Impr. después", "delta_impr_pct": "Δ impresiones",
+    "clics_antes": "Clics antes", "clics_despues": "Clics después", "delta_clics_pct": "Δ clics",
+    "consultas_antes": "Consultas antes", "consultas_despues": "Consultas después",
+    "pos_antes": "Posición antes", "pos_despues": "Posición después", "uplift_impr_pct": "Δ vs control",
+    "uplift_clics_pct": "Δ clics vs control", "ctrl_delta_impr_pct": "Control Δ impr.",
+    "ctrl_delta_clics_pct": "Control Δ clics", "primera_impresion": "Primera impresión",
+    "dias_a_primera_impresion": "Días a 1ª impresión", "consultas_nuevas": "Consultas nuevas",
+    "consultas_perdidas": "Consultas perdidas", "consultas_subieron": "Consultas que subieron",
+    "top_consulta_despues": "Consulta principal", "impr_ml_despues": "Impr. Merchant",
+    "impr_ps_despues": "Impr. snippet producto", "cambios_ficha": "Cambios en la ficha",
+    "score_antes": "Score antes", "score_despues": "Score después", "query": "Consulta", "bucket": "Impr. previas",
+    "n": "SKUs", "ctrl_n": "SKUs control", "ml": "Merchant", "ps": "Snippet", "anonima": "Anónima",
 }
 BOOL_COLS = {"listo", "en_catalogo", "visible", "habilitado", "contenido", "categoria_real", "stock",
-             "stock_confiable", "falta_imagen", "falta_precio", "falta_descripcion", "tambien_sin_stock"}
+             "stock_confiable", "falta_imagen", "falta_precio", "falta_descripcion", "tambien_sin_stock",
+             "ml", "ps", "anonima", "completo"}
 INFO_COLS = {"NOMBRE DE PRODUCTO": "Producto", "NIVEL 1": "Nivel 1", "URL IMAGEN": "Imagen", "URL": "Página"}
 
 
@@ -117,8 +132,14 @@ def _column_config(df: pd.DataFrame) -> dict:
             cfg[c] = st.column_config.ImageColumn("Imagen", width="small")
         elif c == "URL":
             cfg[c] = st.column_config.LinkColumn("Página", display_text="Ver ↗", width="small")
-        elif c in ("ultima_vez_visible", "primera_vez_visto", "salida_flujo"):
+        elif c in ("ultima_vez_visible", "primera_vez_visto", "salida_flujo", "event_day", "primera_impresion", "cohorte"):
             cfg[c] = st.column_config.DateColumn(label, format="DD/MM/YYYY")
+        elif c.endswith("_pct"):
+            cfg[c] = st.column_config.NumberColumn(label, format="%+.0f%%")
+        elif c in ("pos_antes", "pos_despues"):
+            cfg[c] = st.column_config.NumberColumn(label, format="%.1f")
+        elif c in ("score_antes", "score_despues"):
+            cfg[c] = st.column_config.ProgressColumn(label, min_value=0, max_value=MAX_SCORE, format="%d")
         elif c == "ultimo_dia_vistas":
             cfg[c] = st.column_config.DateColumn(label, format="DD/MM/YYYY")
         elif c.startswith("ingresos_"):

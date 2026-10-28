@@ -73,6 +73,7 @@ class ResultStore:
         index.setdefault("alerts", {})
         index.setdefault("ga4", {})
         index.setdefault("gsc", {})
+        index.setdefault("seo", {})
         return index
 
     def save_index(self, index: dict) -> None:
@@ -291,5 +292,26 @@ class ResultStore:
         data = self.storage.read(self._p("perf", f"daily_{name}.parquet"))
         return None if data is None else from_parquet_bytes(data)
 
-    def save_gsc_day(self, day: str, pages: pd.DataFrame) -> None:
+    def save_gsc_day(self, day: str, pages: pd.DataFrame, queries: pd.DataFrame | None = None) -> None:
         self.storage.write(self._p("gsc", day, "pages.parquet"), to_parquet_bytes(pages))
+        if queries is not None:
+            self.storage.write(self._p("gsc", day, "queries.parquet"), to_parquet_bytes(queries))
+
+    def load_gsc_day(self, day: str) -> pd.DataFrame | None:
+        data = self.storage.read(self._p("gsc", day, "pages.parquet"))
+        return None if data is None else from_parquet_bytes(data)
+
+    def load_gsc_queries(self, day: str) -> pd.DataFrame | None:
+        data = self.storage.read(self._p("gsc", day, "queries.parquet"))
+        return None if data is None else from_parquet_bytes(data)
+
+    # ── SEO impact of the catalog work (cohorts of worked SKUs vs control) ──
+    SEO_FILES = ("cohorts", "skus", "daily", "buckets")
+
+    def save_seo(self, frames: dict[str, pd.DataFrame]) -> None:
+        for name, df in frames.items():
+            self.storage.write(self._p("perf", f"seo_{name}.parquet"), to_parquet_bytes(df))
+
+    def load_seo(self, name: str) -> pd.DataFrame | None:
+        data = self.storage.read(self._p("perf", f"seo_{name}.parquet"))
+        return None if data is None else from_parquet_bytes(data)

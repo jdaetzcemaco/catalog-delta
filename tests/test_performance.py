@@ -42,6 +42,10 @@ def test_gsc_frame_weights_position_by_impressions():
                           "clicks": [5, 1, 100], "impressions": [100, 300, 1000], "ctr": [0, 0, 0], "position": [2.0, 10.0, 1.0]})
     g = daily_gsc_frame({"2026-10-10": pages}).set_index("SKU")
     assert g.loc["1001", "clicks"] == 6 and g.loc["1001", "position"] == 8.0
+    assert g.loc["1001", "consultas"] == 0 and g.loc["1001", "impressions_ps"] == 0   # API days carry zeros
+    bq = pages.assign(consultas=[3, 2, 9], impressions_ps=[10, 0, 0], impressions_ml=0, impressions_mobile=[50, 100, 0])
+    g2 = daily_gsc_frame({"2026-10-11": bq}).set_index("SKU")
+    assert g2.loc["1001", "consultas"] == 5 and g2.loc["1001", "impressions_ps"] == 10 and g2.loc["1001", "impressions_mobile"] == 150
 
 
 def test_merge_days_replaces_and_trims():

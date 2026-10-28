@@ -22,6 +22,14 @@ envVarGroups:
         value: "268360644"
       - key: GSC_SITE
         value: sc-domain:cemaco.com
+      # Search Console bulk export in BigQuery (query-level data since 2026-08-27). The job
+      # reads it with the Google service account above once that account has BigQuery Data
+      # Viewer on the dataset and Job User on the project; until then set
+      # GSC_BQ_SERVICE_ACCOUNT_JSON on the job with a key that has that access.
+      - key: GSC_BQ_PROJECT
+        value: cemaco-content-system
+      - key: GSC_BQ_DATASET
+        value: searchconsole
 
 services:
   # Processing job: every 30 min, processes whatever is new in OneDrive incoming/.

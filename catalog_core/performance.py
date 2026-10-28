@@ -17,6 +17,8 @@ ITEM_COLS = {"itemsViewed": "vistas", "itemsAddedToCart": "carrito", "itemsPurch
 ITEM_METRIC_NAMES = PRODUCT_METRICS = list(ITEM_COLS.values())
 LANDING_METRICS = ["sessions", "organic_sessions"]
 GSC_METRICS = ["clicks", "impressions"]
+# Only present on days pulled from the BigQuery export (zeros on API days)
+GSC_EXTRA = ["impressions_ml", "impressions_ps", "impressions_mobile", "consultas"]
 
 
 def daily_item_frame(items_by_day: dict[str, pd.DataFrame]) -> pd.DataFrame:
@@ -61,14 +63,18 @@ def daily_gsc_frame(pages_by_day: dict[str, pd.DataFrame]) -> pd.DataFrame:
             continue
         d = pages.dropna(subset=["SKU"]).copy()
         d["pos_x_impr"] = d["position"] * d["impressions"]
+        for c in GSC_EXTRA:
+            if c not in d.columns:
+                d[c] = 0
         g = d.groupby("SKU", as_index=False).agg(clicks=("clicks", "sum"), impressions=("impressions", "sum"),
-                                                 pos_x_impr=("pos_x_impr", "sum"))
+                                                 pos_x_impr=("pos_x_impr", "sum"),
+                                                 **{c: (c, "sum") for c in GSC_EXTRA})
         g["position"] = (g["pos_x_impr"] / g["impressions"].where(g["impressions"] > 0)).round(1)
         g = g.drop(columns="pos_x_impr")
         g.insert(0, "day", pd.Timestamp(day))
-        frames.append(g)
+        frames.append(g[["day", "SKU", "clicks", "impressions", "position", *GSC_EXTRA]])
     if not frames:
-        return pd.DataFrame(columns=["day", "SKU", "clicks", "impressions", "position"])
+        return pd.DataFrame(columns=["day", "SKU", "clicks", "impressions", "position", *GSC_EXTRA])
     return pd.concat(frames, ignore_index=True)
 
 

@@ -172,7 +172,8 @@ def export_late_alert(today: str, latest_day: str | None, t: AlertThresholds) ->
 
 def traffic_alerts(day: str, perf: pd.DataFrame | None, info: pd.DataFrame | None, t: AlertThresholds) -> list[Alert]:
     """Visible SKUs that customers look at but cannot buy (GA4 views, no stock)."""
-    if perf is None or perf.empty or info is None or info.empty or "TIENE STOCK" not in info.columns:
+    if perf is None or perf.empty or info is None or info.empty or "TIENE STOCK" not in info.columns \
+            or not {"vistas_7d", "carrito_7d"} <= set(perf.columns):   # Search Console only, no GA4 yet
         return []
     from .quality import PLACEHOLDER_STOCK
     from .text import yesno

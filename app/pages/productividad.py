@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import altair as alt
+import pandas as pd
 import streamlit as st
 
 from app import data, ui
@@ -59,6 +60,10 @@ with tab_f:
     ui.kpi(f[3], "⚠️ Con inventario, no visibles", k["con_inventario_no_visibles"])
     if catalog_day:
         st.caption(f"Visibilidad según el catálogo del {ui.fmt_day(catalog_day)}.")
+    if on and data.seo_meta():
+        monday = pd.Timestamp(on) - pd.Timedelta(days=pd.Timestamp(on).weekday())
+        st.session_state.seo_cohort = monday.strftime("%Y-%m-%d")
+        st.page_link("app/pages/seo_impacto.py", label="Ver el impacto en Google de esta semana →", icon="🔍")
     ui.show_table(left.rename(columns={"<ID>": "SKU"}), key="prod_flujo", info=info,
                   download_name=f"salieron_del_flujo_{on}", empty=f"Ningún SKU salió del flujo el {ui.fmt_day(on)}." if on else "Elige una fecha.")
 

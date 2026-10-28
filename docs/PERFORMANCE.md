@@ -10,7 +10,7 @@ y la hoja de historial. En Render va como `GOOGLE_SERVICE_ACCOUNT_JSON` solo en 
 |---|---|---|---|
 | GA4 | `itemId`, `itemVariant`, `itemName` × vistas, carrito, compras, ingresos | **SKU = `itemVariant`** (verificado 100 %); `itemId` = PRODUCT ID | hasta ayer; se re-leen los últimos 3 días |
 | GA4 | `landingPagePlusQueryString`, `sessionDefaultChannelGroup` × sesiones, sesiones con interacción | SKU extraído de la URL `/<slug>-<sku>/p` | ídem |
-| Search Console | página × clics, impresiones, CTR, posición | SKU extraído de la URL | hasta hace 3 días; se re-leen 4 días |
+| Search Console | **export a BigQuery** (desde 27-ago-2026): URL × clics, impresiones, posición, consultas, flags de snippet/Merchant; antes de esa fecha, o sin acceso a BigQuery, la API por página | SKU extraído de la URL | hasta hace 2 días (3 con la API); se re-leen 4 días. Ver docs/SEO.md |
 
 Máximo 30 días por corrida (`PERF_MAX_DAYS_PER_PASS`), así el histórico de 90 días
 (`GA4_BACKFILL_DAYS`) se completa en unas 3 corridas. Un error de cuota o permisos detiene la
@@ -18,7 +18,9 @@ fuente en esa corrida y se reintenta en la siguiente.
 
 ## Archivos
 
-- `ga4/<day>/items.parquet`, `ga4/<day>/landing.parquet`, `gsc/<day>/pages.parquet`: crudos por día.
+- `ga4/<day>/items.parquet`, `ga4/<day>/landing.parquet`, `gsc/<day>/pages.parquet` (+ `queries.parquet`
+  en días de BigQuery): crudos por día.
+- `perf/seo_*.parquet`: impacto SEO del trabajo de catálogo (docs/SEO.md).
 - `perf/daily_item.parquet`, `perf/daily_landing.parquet`, `perf/daily_gsc.parquet`: una fila por
   (día, SKU); el job los actualiza y recorta a 120 días.
 - `perf/sku_perf.parquet`: **lo único que lee el app**. Por SKU del catálogo más reciente: sumas

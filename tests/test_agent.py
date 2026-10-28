@@ -57,6 +57,24 @@ class FakeSrc:
                              "usuario": ["ACASTILLO - Ashley", "AD_EDICION - Diego Conedera", "ACASTILLO - Ashley"],
                              "promovio": ["ACASTILLO - Ashley", "ACASTILLO - Ashley", None],
                              "salida_flujo": pd.to_datetime(["2026-10-01"] * 3), "producto": ["Sartén", "Sartén", "Silla"]})
+    def seo_meta(self): return {"as_of": "2026-10-20", "window": 14}
+    def seo(self, name):
+        if name == "cohorts":
+            return pd.DataFrame({"cohorte": ["2026-09-28", "2026-09-28"], "equipo": ["Todos", "Edición"], "skus": [2, 2],
+                                 "completo": [True, True], "con_presencia": [1, 1], "nuevo": [0, 0], "crecio": [1, 1], "bajo": [0, 0],
+                                 "estable": [0, 0], "sin_presencia": [1, 1], "no_visible": [0, 0], "delta_impr_pct": [50.0, 50.0],
+                                 "ctrl_delta_impr_pct": [10.0, 10.0], "uplift_impr_pct": [40.0, 40.0], "muestra_pequena": [True, True]})
+        if name == "skus":
+            return pd.DataFrame({"SKU": ["100", "200"], "cohorte": ["2026-09-28"] * 2, "equipo": ["Edición"] * 2, "usuarios": ["ana", "ana"],
+                                 "event_day": ["2026-10-01"] * 2, "estado": ["crecio", "sin_presencia"], "impr_antes": [100.0, 0.0],
+                                 "impr_despues": [150.0, 0.0], "delta_impr_pct": [50.0, None], "uplift_impr_pct": [40.0, None],
+                                 "clics_antes": [10.0, 0.0], "clics_despues": [15.0, 0.0], "pos_antes": [4.0, None], "pos_despues": [4.1, None],
+                                 "cambios_ficha": ["+descripción", ""]})
+        if name == "queries":
+            return pd.DataFrame({"SKU": ["100", "100"], "query": ["sarten", "(anónimas)"], "estado": ["nueva", "estable"],
+                                 "impr_antes": [0.0, 5.0], "impr_despues": [30.0, 6.0], "clics_antes": [0.0, 0.0], "clics_despues": [3.0, 0.0],
+                                 "pos_antes": [None, 3.0], "pos_despues": [5.0, 3.0], "anonima": [False, True], "ml": [False, False], "ps": [True, False]})
+        return None
 
 
 @pytest.fixture
@@ -92,6 +110,15 @@ def test_every_tool_answers(tools):
     assert not err and out["serie"] == [{"Fecha": "2026-10-16", "Visible %": 66.7}]
     out, err = call(tools, "cro")
     assert not err and out["conteo_por_grupo"] == {"trafico_sin_stock": 1}
+    out, err = call(tools, "impacto_seo")
+    assert not err and out["cohorte"]["uplift_impr_pct"] == 40.0 and out["cohorte"]["equipo"] == "Todos"
+    assert [s["SKU"] for s in out["skus_con_mayor_cambio"]] == ["100"] and out["visibles_sin_presencia"][0]["SKU"] == "200"
+    out, err = call(tools, "impacto_seo", sku="100")
+    assert not err and out["impacto"]["estado"] == "crecio" and out["consultas"]["nueva"][0]["query"] == "sarten"
+    out, err = call(tools, "impacto_seo", semana="2026-01-05")
+    assert err and "2026-09-28" in out["error"]
+    out, err = call(tools, "sku", sku="100")
+    assert not err and out["impacto_seo"]["estado"] == "crecio"
 
 
 def test_tool_errors_go_back_to_the_model(tools):

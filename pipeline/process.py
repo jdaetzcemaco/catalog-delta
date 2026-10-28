@@ -58,6 +58,7 @@ class PassReport:
     alerts: int | None = None
     ga4: list[str] = field(default_factory=list)
     gsc: list[str] = field(default_factory=list)
+    seo: dict | None = None
     warnings: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     skipped: bool = False
@@ -93,7 +94,7 @@ def is_new(entry: dict | None, f: FileInfo) -> bool:
 
 class Job:
     def __init__(self, settings: Settings, storage: Storage, history: History | None = None,
-                 mailbox=None, ga4=None, gsc=None):
+                 mailbox=None, ga4=None, gsc=None, gsc_bq=None):
         self.settings = settings
         self.storage = storage
         self.store = ResultStore(storage, settings.processed_dir)
@@ -101,7 +102,9 @@ class Job:
         self.mailbox = mailbox
         self.ga4 = ga4
         self.gsc = gsc
+        self.gsc_bq = gsc_bq
         self._perf_dirty = False
+        self._seo_dirty = False
         self.owner: str | None = None
         self._last: tuple[str, pd.DataFrame] | None = None
 
@@ -560,25 +563,50 @@ class Job:
         self._perf_dirty = True
 
     def run_gsc(self, report: PassReport) -> None:
-        """Pull Search Console pages for missing/recent days (final data lags 2–3 days)."""
-        if self.gsc is None:
+        """
+        Pull Search Console for missing/recent days. Days from `gsc_bq_start` on come from the
+        BigQuery export (query-level, lags ~2 days) when a BigQuery client exists; earlier
+        days, or without BigQuery, from the API (page-level, lags 2–3 days).
+        """
+        if self.gsc is None and self.gsc_bq is None:
             return
         from catalog_core.performance import daily_gsc_frame
+
+        from .gsc_bq import GSCNotReady
 
         s = self.settings
         index = self.store.load_index()
         meta = index["gsc"]
         stored = set(meta.get("days", []))
-        todo = self._days_to_pull(stored, s.ga4_refresh_days + 1, s.ga4_backfill_days, lag_days=3)
+        sources = meta.setdefault("sources", {})
+        lag = 2 if self.gsc_bq is not None else 3
+        todo = self._days_to_pull(stored, s.ga4_refresh_days + 1, s.ga4_backfill_days, lag_days=lag)
         new_pages = {}
         for day in todo:
+            use_bq = self.gsc_bq is not None and day >= s.gsc_bq_start
+            if not use_bq and self.gsc is None:
+                continue
             try:
-                pages = self.gsc.pages_report(day)
-                self.store.save_gsc_day(day, pages)
+                if use_bq:
+                    pages = self.gsc_bq.pages_report(day)
+                    queries = self.gsc_bq.queries_report(day)
+                    self.store.save_gsc_day(day, pages, queries)
+                    sources[day] = "bq"
+                    log.info("GSC (BigQuery) %s: %s pages, %s product pages, %s query rows, %.0f MB scanned", day,
+                             len(pages), int(pages["SKU"].notna().sum()), len(queries),
+                             getattr(self.gsc_bq, "last_bytes_processed", 0) / 1e6)
+                else:
+                    pages = self.gsc.pages_report(day)
+                    self.store.save_gsc_day(day, pages)
+                    sources[day] = "api"
+                    log.info("GSC %s: %s pages, %s product pages", day, len(pages), int(pages["SKU"].notna().sum()))
                 new_pages[day] = pages
                 stored.add(day)
                 report.gsc.append(day)
-                log.info("GSC %s: %s pages, %s product pages", day, len(pages), int(pages["SKU"].notna().sum()))
+            except GSCNotReady:
+                # Not stored, so it is retried next pass; older missing days still get pulled now
+                log.info("GSC (BigQuery) %s: export not landed yet", day)
+                continue
             except Exception as exc:
                 log.exception("GSC %s failed", day)
                 report.errors.append(f"gsc {day}: {exc}")
@@ -586,10 +614,12 @@ class Job:
             self._renew_lock()
         if not new_pages:
             return
-        self._merge_daily("gsc", daily_gsc_frame(new_pages), todo[0])
-        meta["days"], meta["as_of"] = sorted(stored), todo[0]
+        as_of = max(stored)
+        self._merge_daily("gsc", daily_gsc_frame(new_pages), as_of)
+        meta["days"], meta["as_of"] = sorted(stored), as_of
         self.store.save_index(index)
         self._perf_dirty = True
+        self._seo_dirty = True
 
     def _cro_window(self, index: dict, as_of: str) -> pd.DataFrame | None:
         """
@@ -688,6 +718,137 @@ class Job:
         except Exception as exc:
             log.exception("Performance aggregates failed")
             report.errors.append(f"performance: {exc}")
+
+    # ── SEO impact of the catalog work ──────────────────────────────────────
+    def refresh_seo_impact(self, report: PassReport) -> None:
+        """
+        Cohorts of worked SKUs (work log) vs matched controls on the daily Search Console
+        rows; query-level deltas and listing changes only for cohorts that just completed.
+        """
+        from catalog_core.seo_impact import SEO_VERSION, build_seo_impact
+
+        index = self.store.load_index()
+        meta = index["seo"]
+        as_of = index["gsc"].get("as_of")
+        n_reports = sum(len(v) for v in index["productivity"].values())
+        if not as_of or not index["catalog"]:
+            return
+        fresh = (getattr(self, "_seo_dirty", False) or meta.get("version") != SEO_VERSION
+                 or meta.get("work_log_files") != n_reports or meta.get("as_of") != as_of)
+        if not fresh:
+            return
+        try:
+            work_log = self.store.load_work_log()
+            if work_log is None or work_log.empty:
+                return
+            daily = self.store.load_daily("gsc")
+            perf = self.store.load_perf()
+            ctx = perf[["SKU", "NIVEL 1"]] if perf is not None and "NIVEL 1" in perf.columns else None
+            result = build_seo_impact(work_log, daily, self.store.load_visible_history(), ctx, as_of,
+                                      window=self.settings.seo_window_days)
+            self._renew_lock()
+            skus = result.skus
+            queries, listing = self._seo_details(index, result, skus)
+            if listing is not None and not listing.empty:
+                skus = skus.merge(listing, on="SKU", how="left")
+            if queries is not None and not queries.empty:
+                from catalog_core.seo_impact import query_rollup
+                skus = skus.merge(query_rollup(queries), on="SKU", how="left")
+            self.store.save_seo({"cohorts": result.cohorts, "skus": skus, "daily": result.daily,
+                                 "buckets": result.buckets, "queries": queries if queries is not None else pd.DataFrame()})
+            cohorts = result.cohorts
+            index["seo"] = {"as_of": as_of, "version": SEO_VERSION, "work_log_files": n_reports,
+                            "window": self.settings.seo_window_days, "skus": int(len(skus)),
+                            "cohorts": sorted(cohorts["cohorte"].astype(str).str[:10].unique().tolist()) if not cohorts.empty else [],
+                            "complete": sorted(cohorts.loc[cohorts["completo"].fillna(False), "cohorte"].astype(str).str[:10].unique().tolist())
+                            if not cohorts.empty else [],
+                            "queries_cohorts": meta.get("queries_cohorts", []),
+                            "listing_cohorts": meta.get("listing_cohorts", [])}
+            self.store.save_index(index)
+            self._seo_dirty = False
+            report.seo = {"skus": int(len(skus)), "cohorts": len(index["seo"]["cohorts"])}
+            log.info("SEO impact as of %s: %s worked SKUs in %s cohorts (%s complete)", as_of, f"{len(skus):,}",
+                     len(index["seo"]["cohorts"]), len(index["seo"]["complete"]))
+        except Exception as exc:
+            log.exception("SEO impact failed")
+            report.errors.append(f"seo: {exc}")
+
+    def _seo_details(self, index: dict, result, skus: pd.DataFrame) -> tuple[pd.DataFrame | None, pd.DataFrame | None]:
+        """
+        Query deltas (from gsc/<day>/queries.parquet) and listing changes (two snapshots) for
+        complete cohorts; cached per cohort in perf/seo_queries.parquet so each is read once.
+        """
+        from catalog_core.seo_impact import listing_changes, query_deltas
+
+        window = self.settings.seo_window_days
+        complete = skus[skus["completo"].fillna(False)]
+        if complete.empty:
+            return self.store.load_seo("queries"), self.store.load_seo("listing")
+        done_q = set(index["seo"].get("queries_cohorts", []))
+        done_l = set(index["seo"].get("listing_cohorts", []))
+        old_q, old_l = self.store.load_seo("queries"), self.store.load_seo("listing")
+        q_parts = [old_q] if old_q is not None and not old_q.empty else []
+        l_parts = [old_l] if old_l is not None and not old_l.empty else []
+        catalog_days = sorted(index["catalog"])
+        gsc_sources = index["gsc"].get("sources", {})
+        for cohorte, part in complete.groupby("cohorte"):
+            key = str(cohorte)[:10]
+            lo, hi = part["event_day"].min() - pd.Timedelta(days=window), part["event_day"].max() + pd.Timedelta(days=window)
+            lo_s, hi_s = lo.strftime("%Y-%m-%d"), hi.strftime("%Y-%m-%d")
+            wanted = set(part["SKU"].astype(str))
+            # Query deltas: only once every day of the cohort's range comes from the BigQuery export
+            days = [d for d in index["gsc"].get("days", []) if lo_s <= d <= hi_s]
+            if key not in done_q and days and all(gsc_sources.get(d) == "bq" for d in days):
+                frames = []
+                for n, d in enumerate(days, 1):
+                    q = self.store.load_gsc_queries(d)
+                    if q is not None and not q.empty:
+                        frames.append(q[q["SKU"].astype(str).isin(wanted)])
+                    if n % 10 == 0:
+                        self._renew_lock()
+                if frames:
+                    q_parts.append(query_deltas(part, pd.concat(frames, ignore_index=True), window))
+                done_q.add(key)
+            # Listing changes: the catalog snapshot right before the window vs the first one after it
+            before = [d for d in catalog_days if d < lo_s]
+            after = [d for d in catalog_days if d >= hi_s]
+            if key not in done_l and before and after:
+                cols = ["SKU", "NOMBRE DE SKU", "NOMBRE DE PRODUCTO", "DESCRIPCION ERP", "MARCA", "TIENE PRECIO", "PRECIO",
+                        "TIENE IMAGEN", "IMAGEN PRIMARIA", "URL IMAGEN", "VISIBLE", "HABILITADO/DESHABILITADO",
+                        "NIVEL 1", "NIVEL 2", "NIVEL 3", "STOCK", "TIENE STOCK"]
+                fb = self._flags_for(before[-1], cols, wanted)
+                fa = self._flags_for(after[0], cols, wanted)
+                if fb is not None and fa is not None:
+                    lc = listing_changes(fb, fa, part["SKU"])
+                    if not lc.empty:
+                        l_parts.append(lc.assign(cohorte=cohorte))
+                    done_l.add(key)
+                self._renew_lock()
+        index["seo"]["queries_cohorts"], index["seo"]["listing_cohorts"] = sorted(done_q), sorted(done_l)
+        queries = pd.concat(q_parts, ignore_index=True) if q_parts else None
+        listing = pd.concat(l_parts, ignore_index=True) if l_parts else None
+        if queries is not None and not queries.empty:
+            keep = pd.Timestamp(self._today_str()) - pd.Timedelta(days=120)
+            queries = queries[pd.to_datetime(queries["event_day"]) >= keep].drop_duplicates(["SKU", "query", "event_day"])
+            self.store.save_seo({"queries": queries})
+        if listing is not None and not listing.empty:
+            listing = listing.drop_duplicates(["SKU", "cohorte"], keep="last")
+            self.store.save_seo({"listing": listing})
+        return queries, (listing.drop(columns=["cohorte"]) if listing is not None else None)
+
+    def _flags_for(self, day: str, cols: list[str], skus: set[str]) -> pd.DataFrame | None:
+        from catalog_core import build_flags
+
+        snap = self.store.load_snapshot(day, columns=None)
+        if snap is None:
+            return None
+        snap = snap[[c for c in cols if c in snap.columns]]
+        snap = snap[snap["SKU"].astype(str).isin(skus)]
+        return build_flags(snap)
+
+    @staticmethod
+    def _today_str() -> str:
+        return (datetime.now(LOCAL_TZ) if LOCAL_TZ else datetime.now()).strftime("%Y-%m-%d")
 
     # ── alerts ──────────────────────────────────────────────────────────────
     def run_alerts(self, report: PassReport) -> None:
@@ -790,6 +951,7 @@ class Job:
             self.run_ga4(report)
             self.run_gsc(report)
             self.refresh_performance(report)
+            self.refresh_seo_impact(report)
             self.run_campaigns(report)
             self.run_alerts(report)
         finally:

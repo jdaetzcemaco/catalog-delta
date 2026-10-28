@@ -271,6 +271,20 @@ TOOL_SCHEMAS: list[dict] = [
             "grupo": {"type": "string", "enum": CRO_GROUPS}, "limite": _LIMIT,
             "nivel1": {"type": "string"}}, "additionalProperties": False},
     },
+    {
+        "name": "impacto_seo",
+        "description": "Impacto en Google del trabajo de catálogo (Diseño y Edición). Cada SKU trabajado se mide "
+                       "14 días antes y 14 después de su salida del flujo de STEP, contra un control de SKUs no "
+                       "trabajados en las mismas fechas. Sin argumentos: la cohorte semanal completa más reciente "
+                       "(SKUs trabajados, con presencia, nuevos en Google, sin presencia, Δ impresiones y clics vs "
+                       "control con intervalo de confianza, posición). Con `semana` (lunes AAAA-MM-DD) y/o `equipo`: "
+                       "esa cohorte y sus SKUs con mayor cambio. Con `sku`: la ficha de impacto de ese SKU y las "
+                       "consultas de Google ganadas, perdidas o que cambiaron de posición.",
+        "input_schema": {"type": "object", "properties": {
+            "semana": {"type": "string", "description": "Lunes de la semana de salida del flujo, AAAA-MM-DD."},
+            "equipo": {"type": "string", "enum": ["Todos", "Diseño", "Edición", "Diseño+Edición"]},
+            "sku": {"type": "string"}, "limite": _LIMIT}, "additionalProperties": False},
+    },
 ]
 for _t in TOOL_SCHEMAS:
     _t["eager_input_streaming"] = True
@@ -448,6 +462,15 @@ class AgentTools:
                                      "usuarios_que_lo_promovieron": sorted(r["promovio"].dropna().unique().tolist()),
                                      "reportes": int(len(r)), "ver_detalle": "herramienta trabajo(sku)"}
                                     if not r.empty else "no aparece en los reportes de productividad guardados")
+        seo_skus = getattr(self.src, "seo", lambda name: None)("skus")
+        if seo_skus is not None and not seo_skus.empty:
+            r = seo_skus[seo_skus["SKU"].astype(str) == sku]
+            out["impacto_seo"] = (_records(r[[c for c in ("event_day", "equipo", "estado", "impr_antes", "impr_despues",
+                                                           "delta_impr_pct", "uplift_impr_pct", "clics_antes", "clics_despues",
+                                                           "pos_antes", "pos_despues", "cambios_ficha") if c in r.columns]], 1)[0]
+                                  if not r.empty else None)
+            if not r.empty:
+                out["impacto_seo"]["ver_detalle"] = "herramienta impacto_seo(sku)"
         return out
 
     def _work_log(self) -> pd.DataFrame:
@@ -600,6 +623,55 @@ class AgentTools:
             df = df[df["NIVEL 1"].map(_norm) == _norm(nivel1)]
         df = df.sort_values("impacto", ascending=False) if "impacto" in df.columns else df
         return {"grupo": grupo, "total": len(df), "as_of": summary.get("as_of"), "skus": _records(df, limite)}
+
+    def t_impacto_seo(self, semana: str | None = None, equipo: str | None = None, sku: str | None = None,
+                      limite: int = 30) -> dict:
+        seo = getattr(self.src, "seo", lambda name: None)
+        cohorts, skus = seo("cohorts"), seo("skus")
+        if cohorts is None or cohorts.empty or skus is None or skus.empty:
+            raise ToolError("Aún no hay medición de impacto SEO; el job la arma cuando tiene work log y Search Console.")
+        meta = getattr(self.src, "seo_meta", lambda: {})() or {}
+        nota = ("Ventana de 14 días antes/después de la salida del flujo; 'Δ vs control' = Δ% de los trabajados menos "
+                "Δ% de SKUs no trabajados del mismo tramo de impresiones y fechas. La posición casi no cambia con este "
+                "trabajo: la ganancia es de cobertura (más consultas e impresiones), no de ranking.")
+        if sku:
+            sku = sku.strip()
+            r = skus[skus["SKU"].astype(str) == sku]
+            if r.empty:
+                return {"sku": sku, "impacto": None, "nota": "El SKU no aparece en el work log de productividad."}
+            q = seo("queries")
+            qs = q[q["SKU"].astype(str) == sku] if q is not None and not q.empty else pd.DataFrame()
+            out = {"sku": sku, "impacto": _records(r.drop(columns=[c for c in ("NIVEL 1",) if c in r.columns]), 1)[0], "nota": nota}
+            if not qs.empty:
+                real = qs[~qs["anonima"].fillna(False).astype(bool)]
+                out["consultas"] = {k: _records(real[real["estado"] == k].sort_values("impr_despues", ascending=False), limite)
+                                    for k in ("nueva", "perdida", "subio", "bajo")}
+                out["consultas"]["estables_top"] = _records(real[real["estado"] == "estable"].sort_values("impr_despues", ascending=False), 10)
+            return out
+        c = cohorts.copy()
+        c["cohorte"] = pd.to_datetime(c["cohorte"]).dt.strftime("%Y-%m-%d")
+        if semana:
+            c = c[c["cohorte"] == semana.strip()[:10]]
+            if c.empty:
+                raise ToolError(f"No hay cohorte para la semana {semana}. Semanas: {', '.join(sorted(cohorts['cohorte'].astype(str).str[:10].unique()))}")
+        else:
+            done = c[c["completo"].fillna(False)]
+            c = c[c["cohorte"] == done["cohorte"].max()] if not done.empty else c[c["cohorte"] == c["cohorte"].max()]
+        c = c[c["equipo"] == (equipo or "Todos")] if (equipo or "Todos") in set(c["equipo"]) else c
+        row = _records(c, 1)[0] if not c.empty else None
+        s = skus[pd.to_datetime(skus["cohorte"]).dt.strftime("%Y-%m-%d") == (row or {}).get("cohorte")]
+        if equipo and equipo != "Todos":
+            s = s[s["equipo"] == equipo]
+        cols = [x for x in ("SKU", "equipo", "usuarios", "event_day", "estado", "impr_antes", "impr_despues", "delta_impr_pct",
+                            "uplift_impr_pct", "clics_antes", "clics_despues", "pos_antes", "pos_despues",
+                            "dias_a_primera_impresion", "consultas_nuevas", "consultas_perdidas", "top_consulta_despues",
+                            "cambios_ficha") if x in s.columns]
+        s = s[cols]
+        moved = s[s["estado"].isin(["crecio", "bajo", "nuevo"])].assign(_k=lambda d: (d["impr_despues"].fillna(0) - d["impr_antes"].fillna(0)).abs())
+        return {"cohorte": row, "as_of": meta.get("as_of"), "ventana_dias": meta.get("window", 14),
+                "semanas_disponibles": sorted(cohorts["cohorte"].astype(str).str[:10].unique().tolist()),
+                "skus_con_mayor_cambio": _records(moved.sort_values("_k", ascending=False).drop(columns="_k"), limite),
+                "visibles_sin_presencia": _records(s[s["estado"] == "sin_presencia"], limite), "nota": nota}
 
 
 # ── the conversation loop ───────────────────────────────────────────────────

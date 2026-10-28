@@ -474,6 +474,76 @@ def test_ga4_and_gsc_pass_backfill_in_chunks_and_build_sku_performance(env):
     assert len(job.run().ga4) == 2  # only the refresh window remains
 
 
+def test_gsc_routes_days_between_bigquery_and_api_and_builds_seo_impact(env, monkeypatch):
+    from datetime import date, timedelta
+
+    from pipeline.gsc_bq import GSCNotReady
+
+    job, drop, history, sku = env
+    today = date.today()
+    drop(f"catalog-daily-{today.isoformat()}.xlsx", [sku("1"), sku("2")])   # visible today → not "no_visible"
+    job.settings.ga4_backfill_days = 40   # 30 days on the first pass, the rest on the second
+    job.settings.ga4_refresh_days = 1
+    split = (today - timedelta(days=10)).isoformat()
+    job.settings.gsc_bq_start = split
+
+    class FakeGSC:
+        days = []
+
+        def pages_report(self, day):
+            self.days.append(day)
+            return pd.DataFrame({"day": [day], "page": ["/a-1/p"], "clicks": [1], "impressions": [10], "ctr": [0.1],
+                                 "position": [4.0], "SKU": ["1"]})
+
+    class FakeBQ:
+        days, not_ready = [], set()
+        last_bytes_processed = 1_000_000
+
+        def pages_report(self, day):
+            if day in self.not_ready:
+                raise GSCNotReady(day)
+            self.days.append(day)
+            return pd.DataFrame({"day": [day, day], "page": ["/a-1/p", "/b-2/p"], "clicks": [2, 0], "impressions": [20, 5],
+                                 "ctr": [0.1, 0], "position": [3.0, 9.0], "SKU": ["1", "2"], "impressions_ml": [0, 0],
+                                 "impressions_ps": [10, 0], "impressions_mobile": [15, 5], "consultas": [4, 1]})
+
+        def queries_report(self, day):
+            return pd.DataFrame({"day": [day], "SKU": ["1"], "query": ["producto 1"], "impressions": [20], "clicks": [2],
+                                 "position": [3.0], "anonima": [False], "ml": [False], "ps": [True]})
+
+    bq = FakeBQ()
+    bq.not_ready = {(today - timedelta(days=2)).isoformat()}   # the newest day has not landed yet
+    job.gsc, job.gsc_bq = FakeGSC(), bq
+    r = job.run()
+    index = job.store.load_index()
+    assert all(d >= split for d in bq.days) and all(d < split for d in FakeGSC.days) and FakeGSC.days
+    assert (today - timedelta(days=2)).isoformat() not in index["gsc"]["days"]   # lag 2, not ready → retried next pass
+    assert index["gsc"]["sources"][bq.days[0]] == "bq" and index["gsc"]["sources"][FakeGSC.days[0]] == "api"
+    assert job.store.load_gsc_queries(bq.days[0]) is not None and job.store.load_gsc_queries(FakeGSC.days[0]) is None
+    daily = job.store.load_daily("gsc").set_index(["day", "SKU"])
+    assert daily.loc[(pd.Timestamp(bq.days[0]), "1"), "consultas"] == 4 and daily.loc[(pd.Timestamp(FakeGSC.days[0]), "1"), "consultas"] == 0
+    assert not r.errors and index["seo"] == {}   # no work log yet → no SEO impact
+
+    # A productivity report with an exit 20 days ago → one complete cohort measured against BigQuery+API days
+    exit_day = (today - timedelta(days=20)).isoformat()
+    prod = pd.DataFrame({"<ID>": [1, 2], "<Name>": ["A", "B"], "Categoría": ["X", "Y"], "Usuario": ["ana", "beto"],
+                         "Usuario Promueve desde Compras": ["ana", None], "Fecha de Salida del Flujo de trabajo": [exit_day] * 2,
+                         "Total Omnicanal": [3, 0]})
+    drop(f"productivity-edicion-{(today - timedelta(days=19)).isoformat()}.xlsx", prod, sheet="Sheet1")
+    r = job.run()
+    assert not r.errors and r.seo["skus"] == 2
+    index = job.store.load_index()
+    skus = job.store.load_seo("skus").set_index("SKU")
+    assert set(skus.index) == {"1", "2"} and skus.loc["1", "impr_antes"] > 0 and bool(skus.loc["1", "completo"])
+    assert skus.loc["1", "estado"] in ("estable", "crecio", "bajo") and skus.loc["2", "estado"] in ("estable", "nuevo", "crecio")
+    cohorts = job.store.load_seo("cohorts")
+    assert set(cohorts["equipo"]) == {"Todos", "Edición"} and index["seo"]["version"] == 1
+    # Nothing new → the SEO step is skipped (index unchanged); a new report triggers it again
+    before = dict(index["seo"])
+    job.run()
+    assert job.store.load_index()["seo"] == before
+
+
 def test_stock_source_upgrade_reprocesses_placeholder_days(env):
     import io
 

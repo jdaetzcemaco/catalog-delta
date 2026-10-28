@@ -26,6 +26,18 @@ def load_dotenv(path: str = ".env") -> None:
             os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
 
 
+def _key_json(value: str, path: str) -> str:
+    """A service-account key given inline (JSON text), or as a path to the key file."""
+    value = (value or "").strip()
+    if value and not value.startswith("{") and os.path.isfile(value):
+        path = value
+        value = ""
+    if not value and path and os.path.isfile(path):
+        with open(path, encoding="utf-8") as fh:
+            value = fh.read()
+    return value
+
+
 @dataclass
 class Settings:
     # "graph" = OneDrive via Microsoft Graph, "local" = a folder on disk (dev/tests)
@@ -66,6 +78,17 @@ class Settings:
     ga4_enabled: bool = True
     ga4_backfill_days: int = 90
     ga4_refresh_days: int = 3          # re-pull the last N days (GA4 closes a day after 24–48 h)
+    # Search Console through its BigQuery bulk export (query-level data, ~8x the API's coverage).
+    # Days >= gsc_bq_start come from BigQuery when credentials allow; earlier days from the API.
+    gsc_bq_enabled: bool = True
+    gsc_bq_project: str = "cemaco-content-system"
+    gsc_bq_dataset: str = "searchconsole"
+    gsc_bq_table: str = "searchdata_url_impression"
+    gsc_bq_billing_project: str = ""   # project that runs the jobs; empty = gsc_bq_project
+    gsc_bq_start: str = "2026-08-27"   # first day in the export
+    # Optional second key (GSC_BQ_SERVICE_ACCOUNT_JSON); falls back to google_service_account
+    gsc_bq_service_account: dict | None = None
+    seo_window_days: int = 14          # before/after window of the SEO impact cohorts
 
     # VTEX (read-only checks: stock/price per SKU through the public search API)
     vtex_account: str = ""
@@ -79,10 +102,9 @@ class Settings:
     def from_env(cls) -> "Settings":
         load_dotenv()
         env = os.environ.get
-        sa = env("GOOGLE_SERVICE_ACCOUNT_JSON", "") or env("GCP_SERVICE_ACCOUNT_JSON", "")
-        if not sa and env("GOOGLE_APPLICATION_CREDENTIALS") and os.path.isfile(env("GOOGLE_APPLICATION_CREDENTIALS")):
-            with open(env("GOOGLE_APPLICATION_CREDENTIALS"), encoding="utf-8") as fh:
-                sa = fh.read()
+        sa = _key_json(env("GOOGLE_SERVICE_ACCOUNT_JSON", "") or env("GCP_SERVICE_ACCOUNT_JSON", ""),
+                       env("GOOGLE_APPLICATION_CREDENTIALS", ""))
+        bq_sa = _key_json(env("GSC_BQ_SERVICE_ACCOUNT_JSON", ""), "")
         return cls(
             storage=env("STORAGE", "graph"),
             local_root=env("LOCAL_ROOT", "data/onedrive"),
@@ -110,6 +132,14 @@ class Settings:
             ga4_enabled=env("GA4_ENABLED", "true").lower() in ("1", "true", "yes"),
             ga4_backfill_days=int(env("GA4_BACKFILL_DAYS", str(cls.ga4_backfill_days))),
             ga4_refresh_days=int(env("GA4_REFRESH_DAYS", str(cls.ga4_refresh_days))),
+            gsc_bq_enabled=env("GSC_BQ_ENABLED", "true").lower() in ("1", "true", "yes"),
+            gsc_bq_project=env("GSC_BQ_PROJECT", cls.gsc_bq_project),
+            gsc_bq_dataset=env("GSC_BQ_DATASET", cls.gsc_bq_dataset),
+            gsc_bq_table=env("GSC_BQ_TABLE", cls.gsc_bq_table),
+            gsc_bq_billing_project=env("GSC_BQ_BILLING_PROJECT", ""),
+            gsc_bq_start=env("GSC_BQ_START", cls.gsc_bq_start),
+            gsc_bq_service_account=json.loads(bq_sa) if bq_sa else None,
+            seo_window_days=int(env("SEO_WINDOW_DAYS", str(cls.seo_window_days))),
             vtex_account=env("VTEX_ACCOUNT", ""),
             vtex_app_key=env("VTEX_APP_KEY", ""),
             vtex_app_token=env("VTEX_APP_TOKEN", ""),

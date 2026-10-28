@@ -14,7 +14,8 @@ from pipeline.storage import LocalStorage
 
 AppTest = pytest.importorskip("streamlit.testing.v1").AppTest
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-PAGES = ["resumen", "cambios", "inventario", "historial", "productividad", "cargar", "campanas", "alertas", "rendimiento", "cro", "preguntar"]
+PAGES = ["resumen", "cambios", "inventario", "historial", "productividad", "cargar", "campanas", "alertas", "rendimiento", "cro",
+         "preguntar", "seo_impacto"]
 
 
 def _xlsx(df: pd.DataFrame, sheet: str) -> bytes:
@@ -78,6 +79,34 @@ def store_root(tmp_path, make_sku, monkeypatch):
                                                  "ingresos": 50.0, "tasa_carrito": 0.1, "tasa_compra": 0.03}]})
     index = job.store.load_index()
     index["perf"] = {"as_of": "2026-04-02", "catalog_day": "2026-04-02", "skus": 3, "skus_with_views_30d": 2}
+    # SEO impact frames so the Impacto SEO page renders its KPIs, chart, tables and SKU detail
+    cohorts = pd.DataFrame({"cohorte": ["2026-03-30"] * 2, "equipo": ["Todos", "Diseño"], "skus": [2, 2], "completo": [True, True],
+                            "con_presencia": [1, 1], "nuevo": [0, 0], "crecio": [1, 1], "bajo": [0, 0], "estable": [0, 0],
+                            "sin_presencia": [1, 1], "no_visible": [0, 0], "pendiente": [0, 0], "impr_antes": [100.0, 100.0],
+                            "impr_despues": [150.0, 150.0], "clics_antes": [10.0, 10.0], "clics_despues": [15.0, 15.0],
+                            "delta_impr_pct": [50.0, 50.0], "delta_clics_pct": [50.0, 50.0], "pos_antes": [4.0, 4.0], "pos_despues": [4.1, 4.1],
+                            "tasa_nuevos": [0.0, 0.0], "dias_a_primera_impresion_mediana": [None, None], "ctrl_delta_impr_pct": [10.0, 10.0],
+                            "ctrl_delta_clics_pct": [5.0, 5.0], "ctrl_tasa_nuevos": [0.0, 0.0], "uplift_impr_pct": [40.0, 40.0],
+                            "uplift_clics_pct": [45.0, 45.0], "uplift_impr_ci_low": [10.0, 10.0], "uplift_impr_ci_high": [70.0, 70.0],
+                            "muestra_pequena": [True, True], "as_of": pd.Timestamp("2026-04-02")})
+    skus = pd.DataFrame({"SKU": ["1", "2"], "event_day": pd.to_datetime(["2026-04-01"] * 2), "cohorte": pd.to_datetime(["2026-03-30"] * 2),
+                         "equipo": ["Diseño"] * 2, "usuarios": ["ana", "beto"], "estado": ["crecio", "sin_presencia"],
+                         "impr_antes": [100.0, 0.0], "impr_despues": [150.0, 0.0], "delta_impr_pct": [50.0, None],
+                         "uplift_impr_pct": [40.0, None], "clics_antes": [10.0, 0.0], "clics_despues": [15.0, 0.0],
+                         "pos_antes": [4.0, None], "pos_despues": [4.1, None], "completo": [True, True],
+                         "dias_a_primera_impresion": [None, None], "cambios_ficha": ["+descripción", ""], "score_antes": [80, 95],
+                         "score_despues": [95, 95], "consultas_nuevas": [1, 0], "consultas_perdidas": [0, 0], "top_consulta_despues": ["cojín", None]})
+    daily = pd.DataFrame({"cohorte": pd.Timestamp("2026-03-30"), "equipo": "Todos", "grupo": ["trabajados"] * 29 + ["control"] * 29,
+                          "offset": list(range(-14, 15)) * 2, "impressions": [10.0] * 58, "clicks": [1.0] * 58, "skus": 2, "indice": [100.0] * 58})
+    buckets = pd.DataFrame({"cohorte": [pd.Timestamp("2026-03-30")], "equipo": ["Todos"], "bucket": ["100–999"], "n": [1], "impr_antes": [100.0],
+                            "impr_despues": [150.0], "delta_impr_pct": [50.0], "clics_antes": [10.0], "clics_despues": [15.0],
+                            "delta_clics_pct": [50.0], "ctrl_n": [3], "ctrl_impr_antes": [300.0], "ctrl_impr_despues": [330.0],
+                            "ctrl_delta_impr_pct": [10.0], "ctrl_delta_clics_pct": [5.0]})
+    queries = pd.DataFrame({"SKU": ["1"], "query": ["cojín"], "impr_antes": [0.0], "impr_despues": [30.0], "clics_antes": [0.0],
+                            "clics_despues": [3.0], "pos_antes": [None], "pos_despues": [5.0], "estado": ["nueva"], "anonima": [False],
+                            "ml": [False], "ps": [True], "cohorte": [pd.Timestamp("2026-03-30")], "event_day": [pd.Timestamp("2026-04-01")]})
+    job.store.save_seo({"cohorts": cohorts, "skus": skus, "daily": daily, "buckets": buckets, "queries": queries})
+    index["seo"] = {"as_of": "2026-04-02", "version": 1, "window": 14, "skus": 2, "cohorts": ["2026-03-30"], "complete": ["2026-03-30"]}
     job.store.save_index(index)
 
     monkeypatch.setenv("STORAGE", "local")
@@ -111,6 +140,19 @@ def test_preguntar_renders_with_api_key(store_root, monkeypatch):
     at.switch_page("app/pages/preguntar.py").run()
     assert not at.exception, [e.value for e in at.exception]
     assert any("Tope diario" in m.label for m in at.metric)
+
+
+def test_seo_impacto_shows_kpis_and_sku_detail(store_root):
+    at = AppTest.from_file(os.path.join(ROOT, "streamlit_app.py"), default_timeout=60)
+    at.session_state["authenticated"] = True
+    at.run()
+    at.switch_page("app/pages/seo_impacto.py").run()
+    assert not at.exception, [e.value for e in at.exception]
+    metrics = {m.label: m.value for m in at.metric}
+    assert metrics["SKUs trabajados"] == "2" and metrics["Δ impresiones vs control"] == "+40%"
+    at.text_input(key="seo_sku_q").set_value("1").run()
+    assert not at.exception, [e.value for e in at.exception]
+    assert any("Creció" in m.value for m in at.markdown)
 
 
 def test_campanas_has_a_filter_button_per_pending_reason(store_root):

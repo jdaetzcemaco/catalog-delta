@@ -20,6 +20,7 @@ cada herramienta, para auditar las cifras.
 | `ranking_skus` | Ranking por cualquier métrica de rendimiento, con filtros |
 | `historial` | Serie diaria de KPIs |
 | `cro` | Conteo por grupo CRO o los SKUs de un grupo por impacto |
+| `impacto_seo` | Cohorte semanal de SKUs trabajados (Diseño/Edición) 14 días antes/después en Google vs control; con `sku`, su ficha y las consultas ganadas/perdidas (ver docs/SEO.md) |
 
 Cada resultado se limita a 200 filas y ~40k caracteres. Los textos del catálogo se tratan
 como datos no confiables (el system prompt prohíbe seguir instrucciones dentro de ellos).

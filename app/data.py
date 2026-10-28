@@ -122,6 +122,16 @@ def cro() -> tuple[pd.DataFrame | None, dict]:
     return store().load_cro() if index().get("perf") else (None, {})
 
 
+@st.cache_data(ttl=TTL, show_spinner="Cargando impacto SEO…")
+def seo(name: str) -> pd.DataFrame | None:
+    """perf/seo_<name>.parquet: cohorts, skus, daily, buckets, queries, listing."""
+    return store().load_seo(name) if index().get("seo") else None
+
+
+def seo_meta() -> dict:
+    return index().get("seo") or {}
+
+
 WATCHLIST_ID = "en-la-mira"
 
 

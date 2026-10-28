@@ -30,6 +30,7 @@ Both use Python 3.12 and the pinned `requirements.txt` (verified with the full p
    | `GRAPH_DRIVE_USER` | ✓ | ✓ | account whose OneDrive holds `cemaco-reports/` |
    | `GRAPH_CLIENT_SECRET` | ✓ | ✓ | client secret **value** |
    | `GOOGLE_SERVICE_ACCOUNT_JSON` | ✓ | | the Google service-account key JSON, pasted whole (GA4 Viewer + Search Console user + history sheet); leave empty to skip Google |
+   | `GSC_BQ_SERVICE_ACCOUNT_JSON` | optional | | key of a service account that can read the Search Console export in BigQuery (project `cemaco-content-system`, dataset `searchconsole`). Not needed once the account above has BigQuery Data Viewer on the dataset and Job User on the project. Without either, Search Console falls back to the API (far lower coverage, see docs/SEO.md) |
    | `APP_PASSWORD` | | ✓ | password for the app login |
    | `RENDER_API_KEY` | | ✓ | optional, see below |
    | `RENDER_CRON_JOB_ID` | | ✓ | optional, the job's ID (`crn-…`, in its URL) |

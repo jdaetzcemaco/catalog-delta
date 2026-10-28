@@ -66,7 +66,13 @@ def main(argv: list[str] | None = None) -> int:
     if settings.ga4_enabled and settings.gsc_site and settings.google_service_account:
         from .gsc import GSCClient
         gsc = GSCClient(settings.gsc_site, settings.google_service_account)
-    job = Job(settings, storage, history, mailbox, ga4, gsc)
+    gsc_bq = None
+    bq_creds = settings.gsc_bq_service_account or settings.google_service_account
+    if settings.ga4_enabled and settings.gsc_bq_enabled and settings.gsc_bq_project and bq_creds:
+        from .gsc_bq import GSCBigQuery
+        gsc_bq = GSCBigQuery(settings.gsc_bq_project, settings.gsc_bq_dataset, settings.gsc_bq_table, bq_creds,
+                             settings.gsc_bq_billing_project)
+    job = Job(settings, storage, history, mailbox, ga4, gsc, gsc_bq=gsc_bq)
     if args.recompute:
         index = job.store.load_index()
         if args.recompute not in index["catalog"]:
