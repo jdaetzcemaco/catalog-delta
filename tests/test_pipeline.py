@@ -607,3 +607,11 @@ def test_stock_source_upgrade_step_runs_for_unchanged_files(env, monkeypatch):
     m = job.store.load_manifest("2026-09-22")
     assert m["quality"]["stock_corrected"] and m["summary"]["With Stock %"] == 50.0
     assert not job.run().upgraded
+
+
+def test_reset_gsc_days_forgets_only_api_days_after_bq_start():
+    from tools.reset_gsc_days import days_to_forget
+
+    index = {"gsc": {"days": ["2026-08-20", "2026-08-27", "2026-09-01", "2026-09-02"],
+                     "sources": {"2026-09-01": "bq", "2026-09-02": "api"}}}
+    assert days_to_forget(index, "2026-08-27") == ["2026-08-27", "2026-09-02"]

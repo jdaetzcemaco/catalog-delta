@@ -36,6 +36,11 @@ Acceso: la cuenta `catalog-delta@g4-cemaco` necesita *BigQuery Data Viewer* en e
 *BigQuery Job User* en el proyecto (o se pasa otra llave en `GSC_BQ_SERVICE_ACCOUNT_JSON`).
 `python3 tools/check_gsc_bq.py 2026-10-10` comprueba el acceso y la cobertura.
 
+Primer despliegue con BigQuery: `python3 tools/reset_gsc_days.py --apply` (con las mismas variables de
+almacenamiento que el job) borra de `index.json` los días ≥ `GSC_BQ_START` que vinieron de la API; el job los
+vuelve a bajar desde BigQuery a razón de 30 días por pasada (cada 30 min) y reemplaza las filas de
+`perf/daily_gsc.parquet`. Clics e impresiones de Rendimiento y Campañas suben ~1.4× / ~2.8× por cobertura.
+
 ## Metodología (`catalog_core/seo_impact.py`)
 
 1. **Evento**: último `salida_flujo` por SKU (fallback `fin_dat_log`). Cada SKU cuenta una vez.
