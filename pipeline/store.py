@@ -305,6 +305,14 @@ class ResultStore:
         data = self.storage.read(self._p("gsc", day, "queries.parquet"))
         return None if data is None else from_parquet_bytes(data)
 
+    # ── Google queries over the last 28 days (per SKU and site-wide) ─────────
+    def save_queries(self, name: str, df: pd.DataFrame) -> None:
+        self.storage.write(self._p("perf", f"queries_{name}_28d.parquet"), to_parquet_bytes(df))
+
+    def load_queries(self, name: str) -> pd.DataFrame | None:
+        data = self.storage.read(self._p("perf", f"queries_{name}_28d.parquet"))
+        return None if data is None else from_parquet_bytes(data)
+
     # ── SEO impact of the catalog work (cohorts of worked SKUs vs control) ──
     SEO_FILES = ("cohorts", "skus", "daily", "buckets")
 

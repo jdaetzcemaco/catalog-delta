@@ -272,6 +272,52 @@ TOOL_SCHEMAS: list[dict] = [
             "nivel1": {"type": "string"}}, "additionalProperties": False},
     },
     {
+        "name": "productividad",
+        "description": "Productividad de los equipos de catálogo (Diseño, Edición) e Ingresos a STEP. Sin fechas: "
+                       "el reporte diario más reciente (o `dia`): SKUs únicos trabajados, solo Diseño / ambos / solo "
+                       "Edición, SKUs por usuario, salidas del flujo de la fecha más reciente (con inventario "
+                       "omnicanal, visibles y no visibles), SKUs repetidos entre equipos e ingresos a STEP (total, con "
+                       "SKU, sin categoría, sin imagen, completitud promedio, en catálogo, visibles). Con `desde`/"
+                       "`hasta`: el acumulado del período por equipo y por usuario, desde el historial de reportes.",
+        "input_schema": {"type": "object", "properties": {
+            "dia": {"type": "string", "description": "Día del reporte de productividad AAAA-MM-DD."},
+            "desde": {"type": "string", "description": "Inicio del período AAAA-MM-DD (modo acumulado)."},
+            "hasta": {"type": "string", "description": "Fin del período AAAA-MM-DD (modo acumulado)."},
+            "limite": _LIMIT}, "additionalProperties": False},
+    },
+    {
+        "name": "totales_rendimiento",
+        "description": "Totales de GA4 y Search Console sumados sobre todos los SKUs (o un NIVEL 1): vistas, "
+                       "agregados al carrito, compras, ingresos, sesiones y sesiones orgánicas, clics e impresiones en "
+                       "Google, con tasas y SKUs con vistas. `agrupar`: 'ninguno' (total), 'nivel1' (por categoría) o "
+                       "'canal' (orgánico, pagado Google, pagado social, directo, otros; solo ventana 30d). La "
+                       "ventana 7d trae también la semana anterior para comparar. Con `trabajado_por` cruza con "
+                       "productividad: solo los SKUs que trabajó Diseño o Edición en un período (cuántos tienen "
+                       "vistas, cuánto venden). Usa esta herramienta para "
+                       "cualquier suma o comparación general; no sumes filas de ranking_skus.",
+        "input_schema": {"type": "object", "properties": {
+            "ventana": {"type": "string", "enum": ["7d", "30d", "90d"]},
+            "agrupar": {"type": "string", "enum": ["ninguno", "nivel1", "canal"]},
+            "nivel1": {"type": "string"}, "solo_visibles": {"type": "boolean"},
+            "con_stock": {"type": "boolean"},
+            "trabajado_por": {"type": "string", "enum": ["Diseño", "Edición", "Cualquiera"],
+                              "description": "Solo SKUs que ese equipo trabajó según los reportes de productividad."},
+            "trabajado_desde": {"type": "string", "description": "Con trabajado_por: primer día de reporte AAAA-MM-DD."},
+            "trabajado_hasta": {"type": "string", "description": "Con trabajado_por: último día de reporte AAAA-MM-DD."},
+            "limite": _LIMIT}, "additionalProperties": False},
+    },
+    {
+        "name": "consultas_google",
+        "description": "Búsquedas de Google que llevaron a las páginas de producto en los últimos 28 días (Search "
+                       "Console). Con `sku`: sus consultas principales (impresiones, clics, CTR, posición) y cuánto "
+                       "tráfico llega por consultas anónimas. Con `texto`: las consultas que contienen ese texto "
+                       "(sobre las 15 principales de cada SKU), y los SKUs que más aparecen para ellas. Sin argumentos: las consultas con más "
+                       "impresiones del sitio.",
+        "input_schema": {"type": "object", "properties": {
+            "sku": {"type": "string"}, "texto": {"type": "string", "minLength": 2}, "limite": _LIMIT},
+            "additionalProperties": False},
+    },
+    {
         "name": "impacto_seo",
         "description": "Impacto en Google del trabajo de catálogo (Diseño y Edición). Cada SKU trabajado se mide "
                        "14 días antes y 14 después de su salida del flujo de STEP, contra un control de SKUs no "
@@ -339,7 +385,8 @@ class AgentTools:
     """
     Read-only tools over a data source with the app.data interface: run_days, manifest,
     table, sku_info, history, alert_days, alerts, acks, lists, list_meta, list_status,
-    perf, cro, visible_history, work_log.
+    perf, perf_meta, cro, visible_history, work_log, productivity_days, productivity, seo,
+    seo_meta, queries, queries_meta.
     """
 
     def __init__(self, src):
@@ -624,6 +671,168 @@ class AgentTools:
         df = df.sort_values("impacto", ascending=False) if "impacto" in df.columns else df
         return {"grupo": grupo, "total": len(df), "as_of": summary.get("as_of"), "skus": _records(df, limite)}
 
+    def t_productividad(self, dia: str | None = None, desde: str | None = None, hasta: str | None = None,
+                        limite: int = 50) -> dict:
+        if desde or hasta:
+            wl = self._work_log()
+            df = wl
+            if desde:
+                df = df[df["dia_reporte"] >= desde]
+            if hasta:
+                df = df[df["dia_reporte"] <= hasta]
+            if df.empty:
+                raise ToolError(f"No hay reportes de productividad en ese período. Reportes: "
+                                f"{wl['dia_reporte'].min()} a {wl['dia_reporte'].max()}.")
+            per_team = df.groupby("equipo")["SKU"].nunique().to_dict()
+            both = set(df.loc[df["equipo"] == "Diseño", "SKU"]) & set(df.loc[df["equipo"] == "Edición", "SKU"])
+            people = []
+            for col_, rol in (("usuario", "trabajó"), ("promovio", "promovió")):
+                g = df.dropna(subset=[col_]).groupby([col_, "equipo"])["SKU"].nunique()
+                people += [{"usuario": u, "rol": rol, "equipo": t, "skus_unicos": int(n)} for (u, t), n in g.items()]
+            salidas = pd.to_datetime(df["salida_flujo"], errors="coerce").dt.date.astype(str)
+            return {"modo": "acumulado", "desde": str(df["dia_reporte"].min()), "hasta": str(df["dia_reporte"].max()),
+                    "dias_con_reporte": int(df["dia_reporte"].nunique()), "skus_unicos": int(df["SKU"].nunique()),
+                    "skus_unicos_por_equipo": per_team, "skus_en_ambos_equipos": len(both),
+                    "por_usuario": sorted(people, key=lambda r: -r["skus_unicos"])[:limite],
+                    "salidas_del_flujo_por_dia": df.assign(_d=salidas).groupby("_d")["SKU"].nunique().tail(60).to_dict()}
+
+        days = self.src.productivity_days()
+        if not days:
+            raise ToolError("Aún no hay reportes de productividad.")
+        day = dia or days[0]
+        if day not in days:
+            raise ToolError(f"No hay reporte de productividad del {day}. Reportes: {days[-1]} a {days[0]}.")
+        p = self.src.productivity(day)
+        run_days = self.src.run_days()
+        catalog_day = next((d for d in run_days if d <= day), run_days[-1] if run_days else None)
+        info = self.src.sku_info(catalog_day) if catalog_day else None
+        out = {"modo": "dia", "dia_reporte": day, "dia_catalogo": catalog_day,
+               "reportes": [t for t, _ in p.teams()] + (["Ingresos a STEP"] if p.ingresos is not None else []),
+               "skus_unicos": p.unique_counts(), "skus_por_usuario": _records(p.skus_by_user(), limite)}
+        flujo = p.latest_flujo_date()
+        if flujo:
+            left = p.left_workflow(flujo, info)
+            out["salidas_del_flujo"] = {"fecha": str(flujo), **p.left_workflow_kpis(left)}
+        if p.both:
+            out["repetidos_entre_equipos"] = len(p.repeated())
+        try:
+            out["con_inventario_omnicanal"] = len(p.with_omni_stock())
+        except Exception:  # noqa: BLE001 - optional block, depends on report columns
+            pass
+        if p.ingresos is not None:
+            out["ingresos_a_step"] = p.intake_kpis(p.intake(info))
+        return out
+
+    def t_totales_rendimiento(self, ventana: str = "30d", agrupar: str = "ninguno", nivel1: str | None = None,
+                              solo_visibles: bool | None = None, con_stock: bool | None = None,
+                              trabajado_por: str | None = None, trabajado_desde: str | None = None,
+                              trabajado_hasta: str | None = None, limite: int = 40) -> dict:
+        perf = self.src.perf()
+        if perf is None:
+            raise ToolError("Aún no hay datos de rendimiento (GA4/Search Console).")
+        df = perf
+        worked = None
+        if trabajado_por:
+            wl = self._work_log()
+            if trabajado_por != "Cualquiera":
+                wl = wl[wl["equipo"] == trabajado_por]
+            if trabajado_desde:
+                wl = wl[wl["dia_reporte"] >= trabajado_desde]
+            if trabajado_hasta:
+                wl = wl[wl["dia_reporte"] <= trabajado_hasta]
+            worked = set(wl["SKU"].astype(str))
+            df = df[df["SKU"].astype(str).isin(worked)]
+        if nivel1:
+            df = df[df["NIVEL 1"].map(_norm) == _norm(nivel1)] if "NIVEL 1" in df.columns else df.iloc[0:0]
+        if solo_visibles and "visible" in df.columns:
+            df = df[df["visible"].fillna(False).astype(bool)]
+        if con_stock is not None and "con_stock" in df.columns:
+            df = df[df["con_stock"].fillna(False).astype(bool) == con_stock]
+        w = ventana
+        base = ["vistas", "carrito", "compras", "ingresos", "sessions", "organic_sessions", "clicks", "impressions"]
+
+        def totals(part: pd.DataFrame, suffix: str) -> dict:
+            t = {m: round(float(part[f"{m}_{suffix}"].fillna(0).sum()), 2) for m in base if f"{m}_{suffix}" in part.columns}
+            if t.get("vistas"):
+                t["tasa_carrito_por_vista"] = round(t.get("carrito", 0) / t["vistas"], 4)
+                t["tasa_compra_por_vista"] = round(t.get("compras", 0) / t["vistas"], 4)
+            if t.get("impressions"):
+                t["ctr_google"] = round(t.get("clicks", 0) / t["impressions"], 4)
+            if f"vistas_{suffix}" in part.columns:
+                t["skus_con_vistas"] = int((part[f"vistas_{suffix}"].fillna(0) > 0).sum())
+            return t
+
+        out = {"ventana": w, "as_of": (getattr(self.src, "perf_meta", lambda: {})() or {}).get("as_of"),
+               "skus_considerados": len(df),
+               **({"skus_trabajados": len(worked), "trabajados_sin_fila_de_rendimiento": len(worked) - len(df)}
+                  if worked is not None else {}),
+               "nota": "Vistas, carrito y compras de GA4 cuentan unidades de ítem; las tasas son unidades/vistas "
+                       "(no por persona como en CRO)."}
+        if agrupar == "canal":
+            buckets = ["organico", "pagado_google", "pagado_social", "directo", "otros"]
+            rows = []
+            for b in buckets:
+                r = {"canal": b}
+                for m in ("vistas", "carrito", "compras", "ingresos"):
+                    c = f"{m}_30d_{b}"
+                    if c in df.columns:
+                        r[m] = round(float(df[c].fillna(0).sum()), 2)
+                if r.get("vistas"):
+                    r["tasa_compra_por_vista"] = round(r.get("compras", 0) / r["vistas"], 4)
+                rows.append(r)
+            if not any(len(r) > 1 for r in rows):
+                raise ToolError("El rendimiento todavía no trae el desglose por canal.")
+            out.update(ventana="30d", por_canal=rows)
+            return out
+        out["total"] = totals(df, w)
+        if w == "7d":
+            prev = {m: round(float(df[f"{m}_7d_prev"].fillna(0).sum()), 2)
+                    for m in ("vistas", "organic_sessions", "clicks") if f"{m}_7d_prev" in df.columns}
+            out["semana_anterior"] = prev
+        if agrupar == "nivel1" and "NIVEL 1" in df.columns:
+            rows = [{"NIVEL 1": k, **totals(g, w)} for k, g in df.groupby("NIVEL 1")]
+            out["por_nivel1"] = sorted(rows, key=lambda r: -r.get("vistas", 0))[:limite]
+        return out
+
+    def t_consultas_google(self, sku: str | None = None, texto: str | None = None, limite: int = 30) -> dict:
+        q = getattr(self.src, "queries", lambda name: None)
+        meta = getattr(self.src, "queries_meta", lambda: {})() or {}
+        per_sku, site = q("sku"), q("site")
+        if per_sku is None or site is None:
+            raise ToolError("Aún no hay consultas de Google agregadas; el job las arma con el export de Search Console.")
+        out = {"ventana": f"{meta.get('dias', 28)} días", "desde": meta.get("desde"), "hasta": meta.get("as_of")}
+        if sku:
+            r = per_sku[per_sku["SKU"].astype(str) == sku.strip()]
+            named, anon = r[r["query"] != "(anónimas)"], r[r["query"] == "(anónimas)"]
+            total = float(r["impresiones"].sum())
+            out.update(sku=sku.strip(), consultas=_records(named, limite),
+                       impresiones_totales=total,
+                       impresiones_anonimas=float(anon["impresiones"].sum()),
+                       nota="Solo las 15 consultas principales por SKU; Google oculta las de bajo volumen (anónimas).")
+            if r.empty:
+                out["nota"] = "Ese SKU no tuvo impresiones en Google en la ventana."
+            return out
+        if texto:
+            t = _norm(texto)
+            # Search every stored query (the per-SKU table reaches the long tail; `site` keeps only the top 3,000)
+            skus = per_sku[(per_sku["query"] != "(anónimas)") & per_sku["query"].map(_norm).str.contains(t, regex=False)]
+            hits = (skus.assign(pos_w=skus["posicion"].fillna(0) * skus["impresiones"])
+                    .groupby("query", as_index=False)
+                    .agg(impresiones=("impresiones", "sum"), clics=("clics", "sum"), pos_w=("pos_w", "sum"),
+                         skus=("SKU", "nunique")))
+            hits["posicion"] = (hits["pos_w"] / hits["impresiones"].where(hits["impresiones"] > 0)).round(1)
+            hits = hits.drop(columns="pos_w").sort_values("impresiones", ascending=False)
+            top_skus = (skus.groupby("SKU", as_index=False)[["impresiones", "clics"]].sum()
+                        .sort_values("impresiones", ascending=False).head(limite))
+            info = self.src.sku_info(self._day(None))
+            if info is not None and not top_skus.empty:
+                top_skus = top_skus.merge(info[["SKU", "NOMBRE DE PRODUCTO"]], on="SKU", how="left")
+            out.update(texto=texto, consultas_que_coinciden=len(hits), consultas=_records(hits, limite),
+                       skus_que_mas_aparecen=_records(top_skus, limite))
+            return out
+        out["consultas_top"] = _records(site, limite)
+        return out
+
     def t_impacto_seo(self, semana: str | None = None, equipo: str | None = None, sku: str | None = None,
                       limite: int = 30) -> dict:
         seo = getattr(self.src, "seo", lambda name: None)
@@ -677,8 +886,16 @@ class AgentTools:
 # ── the conversation loop ───────────────────────────────────────────────────
 def system_prompt(latest_day: str | None) -> str:
     return f"""Eres el analista de datos del tablero Catalog Delta de Cemaco (tienda en línea de Guatemala). \
-Respondes preguntas del equipo de e-commerce sobre la salud del catálogo (export diario de STEP), las listas de \
-campaña, las alertas, el rendimiento en GA4 y Search Console, y la clasificación CRO.
+Respondes preguntas del equipo de e-commerce con los datos de todas las áreas del tablero, y puedes cruzarlas:
+- Catálogo (export diario de STEP): resumen del día, cambios, Inventario Omnicanal, historial → resumen_dia, \
+cambios, historial, sku, buscar_sku.
+- Alertas → alertas. Campañas (listas de vigilancia y pendientes por motivo) → lista.
+- Rendimiento GA4 y Search Console por SKU, categoría y canal → ranking_skus, totales_rendimiento, sku. \
+Búsquedas de Google → consultas_google.
+- CRO (SKUs en la mira) → cro. Impacto SEO del trabajo de catálogo → impacto_seo.
+- Productividad de Diseño, Edición e Ingresos a STEP → productividad (día o período), trabajo (por SKU o usuario).
+Para preguntas que cruzan áreas (por ejemplo, si lo que trabajó un equipo ya tiene tráfico) combina varias \
+herramientas.
 
 Hoy es {today()} (hora de Guatemala). El catálogo más reciente es del {latest_day or 'sin datos'}.
 

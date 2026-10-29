@@ -57,6 +57,25 @@ class FakeSrc:
                              "usuario": ["ACASTILLO - Ashley", "AD_EDICION - Diego Conedera", "ACASTILLO - Ashley"],
                              "promovio": ["ACASTILLO - Ashley", "ACASTILLO - Ashley", None],
                              "salida_flujo": pd.to_datetime(["2026-10-01"] * 3), "producto": ["Sartén", "Sartén", "Silla"]})
+    def productivity_days(self): return ["2026-10-16"]
+    def productivity(self, day):
+        from catalog_core import build_productivity
+        d = pd.DataFrame({"<ID>": ["100", "200"], "<Name>": ["Sartén", "Silla"], "Categoría": ["Hogar", "Muebles"],
+                          "Usuario": ["ana", "ana"], "Usuario Promueve desde Catalogo": ["beto", None],
+                          "Fecha de Salida del Flujo de trabajo": ["2026-10-15", "2026-10-15"], "Total Omnicanal": [3, 0]})
+        e = d.rename(columns={"Usuario Promueve desde Catalogo": "Usuario Promueve desde Compras"}).iloc[:1]
+        ing = pd.DataFrame({"<ID>": ["catgo-1", "100"], "<Name>": ["X", "Sartén"], "Categoría": [None, "Hogar"],
+                            "Completitud Mercadeo (Calculado)": [10, 50], "Estado Imagen Primaria": ["Sin Imagen", "Con Imagen"],
+                            "Fecha de Creación STEP": ["2026-10-15"] * 2})
+        return build_productivity(d, e, ing)
+    def queries_meta(self): return {"as_of": "2026-10-27", "desde": "2026-09-30", "dias": 28}
+    def queries(self, name):
+        if name == "sku":
+            return pd.DataFrame({"SKU": ["100", "100", "200"], "query": ["sarten antiadherente", "(anónimas)", "silla plegable"],
+                                 "impresiones": [120.0, 30.0, 80.0], "clics": [6.0, 0.0, 2.0], "posicion": [4.2, 9.0, 7.5],
+                                 "dias": [20, 25, 10], "ctr": [0.05, 0.0, 0.025]})
+        return pd.DataFrame({"query": ["sarten antiadherente", "silla plegable"], "impresiones": [120.0, 80.0],
+                             "clics": [6.0, 2.0], "posicion": [4.2, 7.5], "skus": [1, 1], "ctr": [0.05, 0.025]})
     def seo_meta(self): return {"as_of": "2026-10-20", "window": 14}
     def seo(self, name):
         if name == "cohorts":
@@ -266,3 +285,46 @@ def test_trabajo_by_sku_and_by_user(tools):
     assert err and "sku" in out["error"]
     out, _ = call(tools, "sku", sku="100")
     assert out["productividad"]["usuarios_que_lo_trabajaron"] == ["ACASTILLO - Ashley", "AD_EDICION - Diego Conedera"]
+
+
+def test_productividad_day_and_period(tools):
+    out, err = call(tools, "productividad")
+    assert not err and out["modo"] == "dia" and out["skus_unicos"]["total"] == 2
+    assert out["skus_unicos"]["ambos"] == 1 and out["salidas_del_flujo"]["fecha"] == "2026-10-15"
+    assert out["salidas_del_flujo"]["con_inventario"] == 1
+    assert out["ingresos_a_step"]["total"] == 2 and out["ingresos_a_step"]["con_sku"] == 1
+    out, err = call(tools, "productividad", desde="2026-10-01", hasta="2026-10-31")
+    assert not err and out["modo"] == "acumulado" and out["skus_unicos"] == 2
+    assert out["skus_unicos_por_equipo"] == {"Diseño": 1, "Edición": 2} and out["skus_en_ambos_equipos"] == 1
+    out, err = call(tools, "productividad", dia="2020-01-01")
+    assert err
+
+
+def test_totales_rendimiento(tools):
+    out, err = call(tools, "totales_rendimiento")
+    assert not err and out["total"]["vistas"] == 1410.0 and out["total"]["compras"] == 21.0
+    assert out["total"]["skus_con_vistas"] == 3
+    out, err = call(tools, "totales_rendimiento", agrupar="nivel1", con_stock=True)
+    assert not err and {r["NIVEL 1"] for r in out["por_nivel1"]} == {"Hogar", "Ferretería"}
+    out, err = call(tools, "totales_rendimiento", trabajado_por="Edición", trabajado_desde="2026-10-03")
+    assert not err and out["skus_trabajados"] == 2 and out["total"]["vistas"] == 1400.0
+    out, err = call(tools, "totales_rendimiento", trabajado_por="Diseño")
+    assert not err and out["skus_considerados"] == 1 and out["total"]["compras"] == 20.0
+    out, err = call(tools, "totales_rendimiento", agrupar="canal")   # fixture has no channel columns
+    assert err
+
+
+def test_consultas_google(tools):
+    out, err = call(tools, "consultas_google", sku="100")
+    assert not err and [q["query"] for q in out["consultas"]] == ["sarten antiadherente"]
+    assert out["impresiones_anonimas"] == 30.0 and out["impresiones_totales"] == 150.0
+    out, err = call(tools, "consultas_google", texto="Sartén")             # accent-insensitive
+    assert not err and out["consultas_que_coinciden"] == 1 and out["skus_que_mas_aparecen"][0]["SKU"] == "100"
+    out, err = call(tools, "consultas_google")
+    assert not err and out["consultas_top"][0]["query"] == "sarten antiadherente"
+
+
+def test_every_page_area_has_a_tool():
+    names = set(agent.TOOLS_BY_NAME)
+    assert {"resumen_dia", "cambios", "historial", "alertas", "lista", "ranking_skus", "totales_rendimiento",
+            "consultas_google", "cro", "impacto_seo", "productividad", "trabajo", "sku", "buscar_sku"} <= names

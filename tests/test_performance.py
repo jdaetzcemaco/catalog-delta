@@ -58,3 +58,21 @@ def test_merge_days_replaces_and_trims():
 def test_empty_inputs():
     assert daily_item_frame({}).empty and daily_landing_frame({}).empty
     assert item_aggregates(daily_item_frame({}), "2026-10-10").empty
+
+
+def test_aggregate_queries_top_per_sku_and_site():
+    from catalog_core.search_queries import aggregate_queries
+
+    day = lambda d, rows: pd.DataFrame([{"day": d, "SKU": sku, "query": q, "impressions": i, "clicks": c,
+                                          "position": p, "anonima": q == "(anónimas)"} for sku, q, i, c, p in rows])
+    days = [day("2026-10-01", [("1", "sarten", 10, 1, 4.0), ("1", "(anónimas)", 3, 0, 9.0), ("2", "sarten", 5, 0, 8.0)]),
+            day("2026-10-02", [("1", "sarten", 30, 2, 2.0), ("2", "silla", 7, 1, 3.0)])] + \
+        [day(f"2026-10-{d:02d}", [("3", "x", 1, 0, 1.0)]) for d in range(3, 12)]   # forces a weekly fold
+    per_sku, site = aggregate_queries(iter(days))
+    s1 = per_sku[(per_sku["SKU"] == "1") & (per_sku["query"] == "sarten")].iloc[0]
+    assert (s1["impresiones"], s1["clics"], s1["dias"]) == (40, 3, 2) and s1["posicion"] == 2.5   # (10*4+30*2)/40
+    assert per_sku[(per_sku["SKU"] == "1") & (per_sku["query"] == "(anónimas)")]["impresiones"].tolist() == [3]
+    top = site.set_index("query")
+    assert top.loc["sarten", "impresiones"] == 45 and top.loc["sarten", "skus"] == 2
+    assert "(anónimas)" not in top.index and top.loc["x", "impresiones"] == 9
+    assert aggregate_queries(iter([]))[0].empty

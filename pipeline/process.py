@@ -720,6 +720,43 @@ class Job:
             report.errors.append(f"performance: {exc}")
 
     # ── SEO impact of the catalog work ──────────────────────────────────────
+    QUERY_WINDOW = 28
+
+    def refresh_queries(self, report: PassReport) -> None:
+        """Top Google queries of the last 28 days, per SKU and site-wide, once per new GSC day."""
+        from catalog_core.search_queries import aggregate_queries
+
+        index = self.store.load_index()
+        as_of = index["gsc"].get("as_of")
+        meta = index.get("queries") or {}
+        if not as_of or meta.get("as_of") == as_of:
+            return
+        days = sorted(d for d in index["gsc"].get("days", []) if d <= as_of)[-self.QUERY_WINDOW:]
+        try:
+            used = []
+
+            def frames():
+                for d in days:
+                    q = self.store.load_gsc_queries(d)
+                    if q is not None and not q.empty:
+                        used.append(d)
+                        yield q
+                    self._renew_lock()
+
+            per_sku, site = aggregate_queries(frames())
+            if not used:
+                return
+            self.store.save_queries("sku", per_sku)
+            self.store.save_queries("site", site)
+            index = self.store.load_index()
+            index["queries"] = {"as_of": as_of, "desde": used[0], "dias": len(used),
+                                "skus": int(per_sku["SKU"].nunique()), "consultas": len(site)}
+            self.store.save_index(index)
+            log.info("Queries: %s days (%s → %s), %s SKUs", len(used), used[0], used[-1], f"{per_sku['SKU'].nunique():,}")
+        except Exception as exc:
+            log.exception("Query aggregates failed")
+            report.errors.append(f"queries: {exc}")
+
     def refresh_seo_impact(self, report: PassReport) -> None:
         """
         Cohorts of worked SKUs (work log) vs matched controls on the daily Search Console
@@ -952,6 +989,7 @@ class Job:
             self.run_gsc(report)
             self.refresh_performance(report)
             self.refresh_seo_impact(report)
+            self.refresh_queries(report)
             self.run_campaigns(report)
             self.run_alerts(report)
         finally:

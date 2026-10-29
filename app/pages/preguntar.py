@@ -10,7 +10,8 @@ import streamlit as st
 from app import agent, data, ui
 
 st.title("Preguntar")
-st.caption("Pregunta en español sobre el catálogo, las listas, las alertas, el rendimiento o el CRO. "
+st.caption("Pregunta en español sobre cualquier área del tablero: catálogo, inventario, alertas, campañas, "
+           "rendimiento, búsquedas de Google, CRO, impacto SEO y productividad de los equipos. "
            "Claude solo **consulta** los datos del tablero; cada cifra sale de una consulta que puedes revisar "
            "en «Datos consultados» debajo de la respuesta.")
 
@@ -36,7 +37,9 @@ state.setdefault("agent_display", [])     # what the page shows: {role, text, to
 EXAMPLES = ["¿Cómo está el catálogo hoy comparado con ayer?",
             "¿Qué le falta a la lista de Navidad para estar al 100 %?",
             "Dame los 20 SKUs con más vistas en 30 días que no tienen stock",
-            "¿Qué SKUs tienen fuga de conversión en Hogar?"]
+            "¿Qué SKUs tienen fuga de conversión en Hogar?",
+            "¿Cuántos SKUs trabajó Edición este mes y cuántos ya tienen tráfico?",
+            "¿Qué buscan en Google para llegar a nuestros nacimientos navideños?"]
 
 
 def show_tools(tools: list[dict]) -> None:

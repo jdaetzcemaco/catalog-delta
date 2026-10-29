@@ -18,6 +18,9 @@ cada herramienta, para auditar las cifras.
 | `buscar_sku` | Búsqueda por código, nombre o marca (sin tildes) |
 | `lista` | Listas de campaña; detalle con fallas por check y SKUs no listos |
 | `ranking_skus` | Ranking por cualquier métrica de rendimiento, con filtros |
+| `totales_rendimiento` | Sumas de GA4 y Search Console del sitio, por NIVEL 1 o por canal (7d trae la semana anterior) |
+| `consultas_google` | Búsquedas de Google por SKU, por texto o las principales del sitio (últimos 28 días) |
+| `productividad` | Reporte diario de Diseño, Edición e Ingresos a STEP, o el acumulado de un período por equipo y usuario |
 | `historial` | Serie diaria de KPIs |
 | `cro` | Conteo por grupo CRO o los SKUs de un grupo por impacto |
 | `impacto_seo` | Cohorte semanal de SKUs trabajados (Diseño/Edición) 14 días antes/después en Google vs control; con `sku`, su ficha y las consultas ganadas/perdidas (ver docs/SEO.md) |
@@ -53,3 +56,10 @@ flujo. Se arma con todos los reportes guardados y se actualiza cuando llega uno 
 (`index["sku_history"]["work_log_files"]`). Cubre solo los días con reporte: desde el 23 de
 septiembre de 2026, cuando empezó la lectura de los correos de STEP, más un reporte suelto del 20
 de marzo.
+
+## Consultas de Google (28 días)
+
+El job arma `perf/queries_sku_28d.parquet` (las 15 consultas principales de cada SKU más una
+fila «(anónimas)» con el tráfico que Google oculta) y `perf/queries_site_28d.parquet` (las 3,000
+consultas con más impresiones del sitio) a partir de `gsc/<día>/queries.parquet`. Se recalcula una
+vez por cada día nuevo de Search Console (`index["queries"]`).

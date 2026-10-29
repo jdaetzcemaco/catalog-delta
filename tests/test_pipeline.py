@@ -615,3 +615,22 @@ def test_reset_gsc_days_forgets_only_api_days_after_bq_start():
     index = {"gsc": {"days": ["2026-08-20", "2026-08-27", "2026-09-01", "2026-09-02"],
                      "sources": {"2026-09-01": "bq", "2026-09-02": "api"}}}
     assert days_to_forget(index, "2026-08-27") == ["2026-08-27", "2026-09-02"]
+
+
+def test_query_aggregates_follow_the_gsc_days(env):
+    job, drop, history, sku = env
+    for d, imp in (("2026-10-01", 10), ("2026-10-02", 20)):
+        job.store.save_gsc_day(d, pd.DataFrame({"SKU": ["1"], "impressions": [imp]}),
+                               pd.DataFrame({"day": [d], "SKU": ["1"], "query": ["sarten"], "impressions": [imp],
+                                             "clicks": [1], "position": [3.0], "anonima": [False]}))
+    index = job.store.load_index()
+    index["gsc"] = {"as_of": "2026-10-02", "days": ["2026-10-01", "2026-10-02"]}
+    job.store.save_index(index)
+    from pipeline.process import PassReport
+    job.refresh_queries(PassReport())
+    assert job.store.load_queries("sku")["impresiones"].tolist() == [30]
+    meta = job.store.load_index()["queries"]
+    assert (meta["as_of"], meta["dias"], meta["desde"]) == ("2026-10-02", 2, "2026-10-01")
+    job.store.save_queries("sku", pd.DataFrame())          # same as_of: not recomputed
+    job.refresh_queries(PassReport())
+    assert job.store.load_queries("sku").empty

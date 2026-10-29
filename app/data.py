@@ -132,6 +132,16 @@ def seo_meta() -> dict:
     return index().get("seo") or {}
 
 
+@st.cache_data(ttl=TTL, show_spinner=False)
+def queries(name: str) -> pd.DataFrame | None:
+    """perf/queries_<sku|site>_28d.parquet: top Google queries of the last 28 days."""
+    return store().load_queries(name) if index().get("queries") else None
+
+
+def queries_meta() -> dict:
+    return index().get("queries") or {}
+
+
 WATCHLIST_ID = "en-la-mira"
 
 
