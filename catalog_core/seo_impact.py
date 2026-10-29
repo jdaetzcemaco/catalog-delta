@@ -219,36 +219,60 @@ def control_pool(events: pd.DataFrame, work_log: pd.DataFrame | None, visible_hi
     return pool.reset_index(drop=True)
 
 
+CTRL_SUMS = ["impr_antes", "impr_despues", "clics_antes", "clics_despues"]
+
+
+def aggregate_controls(rows: pd.DataFrame) -> pd.DataFrame:
+    """
+    Collapse per-SKU control metrics into strata (cohorte, event_day, bucket, NIVEL 1):
+    count, sums and the number that went 0 → >0. Everything downstream only needs these
+    sums, and keeping one row per pool SKU per event day was the job's memory peak.
+    """
+    cols = ["cohorte", "event_day", "bucket", "NIVEL 1", "ctrl_n", *CTRL_SUMS, "nuevos"]
+    if rows is None or rows.empty:
+        return pd.DataFrame(columns=cols)
+    if "ctrl_n" in rows.columns:
+        return rows
+    c = rows.copy()
+    c["bucket"] = bucket(c["impr_antes"])
+    c["nuevos"] = ((c["impr_antes"] == 0) & (c["impr_despues"] > 0)).astype(int)
+    if "cohorte" not in c.columns:
+        c["cohorte"] = pd.NaT
+    if "NIVEL 1" not in c.columns:
+        c["NIVEL 1"] = np.nan
+    g = c.groupby(["cohorte", "event_day", "bucket", "NIVEL 1"], dropna=False).agg(
+        ctrl_n=("SKU", "size"), **{k: (k, "sum") for k in CTRL_SUMS}, nuevos=("nuevos", "sum")).reset_index()
+    return g[cols]
+
+
+def _ctrl_summary(agg: pd.DataFrame, keys: list[str]) -> pd.DataFrame:
+    g = agg.groupby(keys, dropna=False).agg(ctrl_n=("ctrl_n", "sum"), **{f"ctrl_{k}": (k, "sum") for k in CTRL_SUMS},
+                                            nuevos=("nuevos", "sum")).reset_index()
+    g["ctrl_tasa_nuevos"] = g["nuevos"] / g["ctrl_n"].where(g["ctrl_n"] > 0)
+    return g.drop(columns="nuevos")
+
+
 def match_controls(treated: pd.DataFrame, controls: pd.DataFrame, min_stratum: int = 20) -> pd.DataFrame:
     """
     Stratified control deltas for each treated row. Stratum = (event_day, bucket of previous
     impressions[, NIVEL 1 when that stratum holds ≥ min_stratum controls]). Deterministic:
-    the control delta is the ratio of sums over the stratum (no sampling).
+    the control delta is the ratio of sums over the stratum (no sampling). `controls` is
+    either per-SKU metrics or the output of `aggregate_controls`.
     """
     t = treated.copy()
     t["bucket"] = bucket(t["impr_antes"])
     out_cols = ["ctrl_n", "ctrl_impr_antes", "ctrl_impr_despues", "ctrl_clics_antes", "ctrl_clics_despues",
                 "ctrl_delta_impr_pct", "ctrl_delta_clics_pct", "ctrl_tasa_nuevos", "uplift_impr_pct", "uplift_clics_pct"]
-    if controls is None or controls.empty or t.empty:
+    agg = aggregate_controls(controls)
+    if agg.empty or t.empty:
         for c in out_cols:
             t[c] = np.nan
         return t.drop(columns="bucket")
-    c = controls.copy()
-    c["bucket"] = bucket(c["impr_antes"])
-    c["nuevo"] = (c["impr_antes"] == 0) & (c["impr_despues"] > 0)
-    keys_fine = ["event_day", "bucket", "NIVEL 1"] if "NIVEL 1" in c.columns and "NIVEL 1" in t.columns else None
+    keys_fine = ["event_day", "bucket", "NIVEL 1"] if "NIVEL 1" in t.columns and agg["NIVEL 1"].notna().any() else None
     keys_coarse = ["event_day", "bucket"]
-
-    def summarize(keys):
-        g = c.groupby(keys, dropna=False).agg(ctrl_n=("SKU", "size"), ctrl_impr_antes=("impr_antes", "sum"),
-                                              ctrl_impr_despues=("impr_despues", "sum"), ctrl_clics_antes=("clics_antes", "sum"),
-                                              ctrl_clics_despues=("clics_despues", "sum"), ctrl_tasa_nuevos=("nuevo", "mean"))
-        return g.reset_index()
-
-    coarse = summarize(keys_coarse)
-    merged = t.merge(coarse, on=keys_coarse, how="left")
+    merged = t.merge(_ctrl_summary(agg, keys_coarse), on=keys_coarse, how="left")
     if keys_fine:
-        fine = summarize(keys_fine)
+        fine = _ctrl_summary(agg, keys_fine)
         fine = fine[fine["ctrl_n"] >= min_stratum]
         f = t[["SKU", *keys_fine]].merge(fine, on=keys_fine, how="left").set_index("SKU")
         merged = merged.set_index("SKU")
@@ -335,9 +359,7 @@ def bucket_summary(skus: pd.DataFrame, controls: pd.DataFrame) -> pd.DataFrame:
         return pd.DataFrame(columns=["cohorte", "equipo", "bucket", "n", "impr_antes", "impr_despues", "delta_impr_pct",
                                      "ctrl_n", "ctrl_impr_antes", "ctrl_impr_despues", "ctrl_delta_impr_pct"])
     t["bucket"] = bucket(t["impr_antes"])
-    c = controls.copy() if controls is not None and not controls.empty else pd.DataFrame(columns=["cohorte", "impr_antes", "impr_despues", "clics_antes", "clics_despues"])
-    if not c.empty:
-        c["bucket"] = bucket(c["impr_antes"])
+    c = aggregate_controls(controls)
     for (cohorte, equipo), part in pd.concat([t.assign(equipo=ALL_TEAMS), t]).groupby(["cohorte", "equipo"]):
         cc = c[c["cohorte"] == cohorte] if not c.empty else c
         for b in BUCKET_LABELS:
@@ -345,15 +367,16 @@ def bucket_summary(skus: pd.DataFrame, controls: pd.DataFrame) -> pd.DataFrame:
             if x.empty:
                 continue
             y = cc[cc["bucket"] == b] if not cc.empty else cc
+            n_c = int(y["ctrl_n"].sum()) if len(y) else 0
             rows.append({"cohorte": cohorte, "equipo": equipo, "bucket": b, "n": int(len(x)),
                          "impr_antes": float(x["impr_antes"].sum()), "impr_despues": float(x["impr_despues"].sum()),
                          "delta_impr_pct": _pct(x["impr_despues"].sum(), x["impr_antes"].sum()),
                          "clics_antes": float(x["clics_antes"].sum()), "clics_despues": float(x["clics_despues"].sum()),
                          "delta_clics_pct": _pct(x["clics_despues"].sum(), x["clics_antes"].sum()),
-                         "ctrl_n": int(len(y)), "ctrl_impr_antes": float(y["impr_antes"].sum()) if len(y) else np.nan,
-                         "ctrl_impr_despues": float(y["impr_despues"].sum()) if len(y) else np.nan,
-                         "ctrl_delta_impr_pct": _pct(y["impr_despues"].sum(), y["impr_antes"].sum()) if len(y) else np.nan,
-                         "ctrl_delta_clics_pct": _pct(y["clics_despues"].sum(), y["clics_antes"].sum()) if len(y) else np.nan})
+                         "ctrl_n": n_c, "ctrl_impr_antes": float(y["impr_antes"].sum()) if n_c else np.nan,
+                         "ctrl_impr_despues": float(y["impr_despues"].sum()) if n_c else np.nan,
+                         "ctrl_delta_impr_pct": _pct(y["impr_despues"].sum(), y["impr_antes"].sum()) if n_c else np.nan,
+                         "ctrl_delta_clics_pct": _pct(y["clics_despues"].sum(), y["clics_antes"].sum()) if n_c else np.nan})
     return pd.DataFrame(rows)
 
 
@@ -362,7 +385,8 @@ def daily_index(skus: pd.DataFrame, daily_gsc: pd.DataFrame | None, controls_dai
     """
     Impressions per day relative to the event (offset −window..+window) for the worked
     SKUs of each (cohorte, equipo) and for their control, indexed to the before-window
-    mean (= 100). `controls_daily`: day, SKU, impressions, clicks, cohorte, event_day.
+    mean (= 100). `controls_daily`: day, impressions, clicks, skus, cohorte, event_day (one
+    row per cohort and day, already summed over the control pool).
     """
     cols = ["cohorte", "equipo", "grupo", "offset", "impressions", "clicks", "skus", "indice"]
     d = _norm_daily(daily_gsc)
@@ -384,16 +408,15 @@ def daily_index(skus: pd.DataFrame, daily_gsc: pd.DataFrame | None, controls_dai
 
     frames.append(aligned(t, "trabajados"))
     if controls_daily is not None and not controls_daily.empty:
-        cd = _norm_daily(controls_daily[["day", "SKU", "impressions", "clicks"]].assign(position=np.nan))
-        ce = controls_daily[["SKU", "event_day", "cohorte"]].drop_duplicates()
-        ce["event_day"] = pd.to_datetime(ce["event_day"]).dt.normalize()
+        cd = controls_daily.copy()
+        cd["day"] = pd.to_datetime(cd["day"]).dt.normalize()
+        cd["event_day"] = pd.to_datetime(cd["event_day"]).dt.normalize()
+        cd["offset"] = (cd["day"] - cd["event_day"]).dt.days
+        cd = cd[(cd["offset"] >= -window) & (cd["offset"] <= window)]
         for equipo in t["equipo"].unique():
-            m = cd.merge(ce.assign(equipo=equipo), on="SKU", how="inner")
-            m["offset"] = (m["day"] - m["event_day"]).dt.days
-            m = m[(m["offset"] >= -window) & (m["offset"] <= window)]
-            g = m.groupby(["cohorte", "equipo", "offset"]).agg(impressions=("impressions", "sum"), clicks=("clicks", "sum")).reset_index()
-            g["skus"] = g["cohorte"].map(ce.groupby("cohorte")["SKU"].nunique())
-            g["grupo"] = "control"
+            g = cd.groupby(["cohorte", "offset"]).agg(impressions=("impressions", "sum"), clicks=("clicks", "sum"),
+                                                      skus=("skus", "max")).reset_index()
+            g["equipo"], g["grupo"] = equipo, "control"
             frames.append(g)
     out = pd.concat(frames, ignore_index=True)
     if out.empty:
@@ -562,12 +585,14 @@ def build_seo_impact(work_log: pd.DataFrame | None, daily_gsc: pd.DataFrame | No
                 continue
             cm = cm.merge(pool, on="SKU", how="left")
             cm["cohorte"] = cohorte
-            control_rows.append(cm)
-        # Aligned daily series for the control: SKUs of the pool around the cohort's median event day
+            control_rows.append(aggregate_controls(cm))
+            del cm
+        # Aligned daily series for the control: the pool summed per day around the cohort's median event day
         med = pd.Timestamp(part["event_day"].median()).normalize()
-        sub = d[d["SKU"].isin(pool["SKU"])]
+        sub = d_c[(d_c["day"] >= med - pd.Timedelta(days=window)) & (d_c["day"] <= med + pd.Timedelta(days=window))]
         if not sub.empty:
-            control_daily.append(sub[["day", "SKU", "impressions", "clicks"]].assign(cohorte=cohorte, event_day=med))
+            g = sub.groupby("day").agg(impressions=("impressions", "sum"), clicks=("clicks", "sum")).reset_index()
+            control_daily.append(g.assign(skus=int(sub["SKU"].nunique()), cohorte=cohorte, event_day=med))
     controls = pd.concat(control_rows, ignore_index=True) if control_rows else pd.DataFrame()
     if not controls.empty:
         matched = []
