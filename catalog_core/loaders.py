@@ -66,18 +66,41 @@ def load_catalog(source: Source, name: str | None = None) -> pd.DataFrame:
     return df
 
 
+def sku_from_erp(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    The SKU of a productivity report is 'Sku ERP' without its leading zeros
+    ('000000000001235140' → '1235140'); <ID> now carries another system's ID
+    ('catgo-…'). The result goes in <ID>, so every consumer keeps joining on it;
+    rows without a Sku ERP keep their <ID>. Reports without the column are unchanged.
+    """
+    erp = next((c for c in df.columns if str(c).strip().lower() == "sku erp"), None)
+    if erp is None or "<ID>" not in df.columns:
+        return df
+    sku = (df[erp].astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
+           .str.lstrip("0").where(lambda s: s.str.fullmatch(r"\d+", na=False)))
+    df["<ID>"] = sku.fillna(df["<ID>"].astype(str).str.strip())
+    return df
+
+
 def load_productivity(source: Source) -> pd.DataFrame:
     """
     Load a Diseño/Edición productivity export.
 
     Column names are stripped but keep their case (e.g. '<ID>', '<Name>'); <ID> is
-    stripped text so it joins against catalog SKUs.
+    stripped text so it joins against catalog SKUs, taken from 'Sku ERP' when the
+    report has it (see `sku_from_erp`).
     """
-    df = pd.read_excel(_as_readable(source), engine="calamine")
+    data = _as_readable(source)
+    # 'Sku ERP' must be read as text: as a number, 18-digit codes lose their last digit
+    header = pd.read_excel(data, engine="calamine", nrows=0).columns
+    text = {c: str for c in header if str(c).strip().lower() == "sku erp"}
+    if hasattr(data, "seek"):
+        data.seek(0)
+    df = pd.read_excel(data, engine="calamine", dtype=text or None)
     df.columns = [str(c).strip() for c in df.columns]
     if "<ID>" in df.columns:
         df["<ID>"] = df["<ID>"].astype(str).str.strip()
-    return df
+    return sku_from_erp(df)
 
 
 INVENTORY_SHEET = "Inventarios"

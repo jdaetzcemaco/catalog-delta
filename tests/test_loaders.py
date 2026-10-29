@@ -87,3 +87,14 @@ def test_inventory_sheet_absent():
     assert load_inventory_sheet(b"", name="x.csv") is None
     df = pd.DataFrame({"SKU": ["1"]})
     assert attach_inventory(df, None) is df
+
+
+def test_productivity_sku_comes_from_sku_erp_without_leading_zeros():
+    from catalog_core.loaders import load_productivity
+    buf = io.BytesIO()
+    pd.DataFrame({"<ID>": ["1169614", "catgo-730dcc", "catgo-x"],
+                  "Sku ERP": ["000000000001169614", "000000000001235140", None],
+                  "<Name>": ["A", "B", "C"]}).to_excel(buf, index=False)
+    df = load_productivity(buf.getvalue())
+    assert df["<ID>"].tolist() == ["1169614", "1235140", "catgo-x"]
+    assert df["Sku ERP"].tolist()[0] == "000000000001169614"   # the source column is kept

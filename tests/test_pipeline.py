@@ -139,6 +139,25 @@ def test_work_log_is_built_from_productivity_reports(env):
     assert len(job.store.load_work_log()) == 1
 
 
+def test_sku_erp_reports_stored_under_catgo_are_folded_in_again(env):
+    job, drop, history, sku = env
+    drop("catalog-daily-2026-10-27.xlsx", pd.DataFrame([sku("1235140")]))
+    df = pd.DataFrame({"<ID>": ["catgo-730dcc"], "Sku ERP": ["000000000001235140"], "<Name>": ["X"],
+                       "Usuario": ["ana"], "Fecha de Salida del Flujo de trabajo": ["2026-10-26"]})
+    drop("productivity-edicion-2026-10-27_07.30.10.xlsx", df, sheet="Sheet1")
+    job.run()
+    assert job.store.load_work_log()["SKU"].tolist() == ["1235140"]
+    # A job from before the change folded the report in under its catgo ID
+    index = job.store.load_index()
+    index["sku_history"]["sku_source_version"] = 1
+    job.store.save_index(index)
+    job.store.save_work_log(job.store.load_work_log().assign(SKU="catgo-730dcc"))
+    job.run()
+    assert job.store.load_work_log()["SKU"].tolist() == ["1235140"]
+    assert "1235140" in job.store.load_workflow_dates()["SKU"].tolist()
+    assert job.store.load_index()["sku_history"]["sku_source_version"] == 2
+
+
 def test_file_day_and_latest_per_day():
     from datetime import datetime, timezone
     a = FileInfo("catalog-daily-2026-04-01.xlsx", "x", datetime(2026, 4, 1, 12, tzinfo=timezone.utc), 1)

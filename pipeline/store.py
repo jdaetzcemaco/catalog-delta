@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 import pandas as pd
 
 from catalog_core import CatalogRun
+from catalog_core.loaders import sku_from_erp
 from catalog_core.quality import quality_checks
 
 from .storage import FileInfo, Storage, _join
@@ -183,7 +184,8 @@ class ResultStore:
 
     def load_productivity(self, day: str, team: str) -> pd.DataFrame | None:
         data = self.storage.read(self._p("productivity", day, f"{team}.parquet"))
-        return None if data is None else from_parquet_bytes(data)
+        # Days stored before the SKU came from 'Sku ERP' still read with the right SKU
+        return None if data is None else sku_from_erp(from_parquet_bytes(data))
 
     # ── campaign lists ──────────────────────────────────────────────────────
     def save_list(self, meta: dict) -> None:

@@ -41,6 +41,8 @@ except Exception:  # pragma: no cover - tzdata missing
 
 DATE_RE = re.compile(r"(\d{4}-\d{2}-\d{2})")
 TEAMS = ("diseno", "edicion", "ingresos")
+# 2: the productivity SKU comes from 'Sku ERP' (<ID> holds another system's ID since 2026-10-26)
+SKU_SOURCE_VERSION = 2
 
 
 class History(Protocol):
@@ -391,6 +393,16 @@ class Job:
                     report.errors.append(f"visible history: {exc}")
 
         done_wf = hist_meta.setdefault("workflow_files", [])
+        done_wl = hist_meta.setdefault("work_log_files", [])
+        if hist_meta.get("sku_source_version", 1) < SKU_SOURCE_VERSION:
+            # Reports with 'Sku ERP' were folded in under their 'catgo-…' <ID>; fold them in again
+            for key in sorted(set(done_wf) | set(done_wl)):
+                team, day = key.split("/", 1)
+                df = self.store.load_productivity(day, team)
+                if df is not None and any(str(c).strip().lower() == "sku erp" for c in df.columns):
+                    done_wf[:] = [k for k in done_wf if k != key]
+                    done_wl[:] = [k for k in done_wl if k != key]
+            hist_meta["sku_source_version"] = SKU_SOURCE_VERSION
         wf = self.store.load_workflow_dates()
         changed = False
         for team in ("diseno", "edicion"):
@@ -412,7 +424,6 @@ class Job:
             self.store.save_index(index)
 
         # Who worked each SKU: every Diseño/Edición report row, kept (small: ~50 rows a day)
-        done_wl = hist_meta.setdefault("work_log_files", [])
         pending_wl = [(team, day) for team in ("diseno", "edicion") for day in sorted(index["productivity"].get(team, {}))
                       if f"{team}/{day}" not in done_wl]
         if pending_wl:

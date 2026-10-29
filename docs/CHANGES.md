@@ -16,6 +16,7 @@ v1 definitions except for the fixes below, each tagged `FIX Fn` in the code.
 | F7 | Non-physical filter matched "certificado de regalo", but the export says "Certificados De Regalo" (217 SKUs), so gift certificates were treated as physical products. | Matches singular and plural. |
 | F9 | Since 2026-09-22 the export sets `STOCK = 1,000,000` on ~99% of SKUs: a virtual warehouse `MDR` in the `Inventarios` sheet carries exactly 1,000,000 and is summed into `Total`/`STOCK`. | `has_stock` comes from the `Inventarios` sheet: sum of warehouse cells excluding the placeholder value (`STOCK REAL`). On pre-placeholder exports this equals `STOCK` on 99.97% of SKUs. Stored days with the placeholder are re-processed automatically. |
 | F8 | "Score = 100" counted SKUs scoring 100, but the weights add up to 95, so it was always 0 (also in the history sheet). | "Perfect Score" counts SKUs at the maximum (95). Scores themselves are unchanged. History rows before the switch show 0. |
+| F10 | Since 2026-10-26 the Diseño/Edición reports put another system's ID (`catgo-…`) in `<ID>` for new products, so those rows matched no catalog SKU. | The SKU comes from `Sku ERP` without leading zeros (`000000000001235140` → `1235140`), read as text; rows without it keep `<ID>`. Stored reports are re-read the same way and folded into the work log and workflow dates again once (`SKU_SOURCE_VERSION`). |
 
 ## Parity on real files (today 2026-03-31, yesterday 2025-12-04, productivity 2026-04-23)
 
